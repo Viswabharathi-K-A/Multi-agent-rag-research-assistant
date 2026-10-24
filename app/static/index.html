@@ -1,0 +1,87 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+    <title>Multi-Agent Research Assistant</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/app.js" defer></script>
+</head>
+
+<body>
+    <div class="app-shell">
+        <header class="app-header">
+            <h1>Multi-Agent Research Assistant</h1>
+            <p>
+                LangGraph · RAG · MCP · LLM Routing
+            </p>
+        </header>
+
+        <main class="workspace">
+            <section
+                class="chat-panel"
+                aria-label="Chat"
+            >
+                <h2>Research Assistant</h2>
+
+                <div
+                    id="messages"
+                    class="messages"
+                    aria-live="polite"
+                >
+                    <p class="welcome">
+                        Ask a question about technical
+                        documentation or code.
+                    </p>
+                </div>
+
+                <form id="chat-form">
+                    <label for="query">
+                        Your question
+                    </label>
+
+                    <textarea
+                        id="query"
+                        name="query"
+                        rows="3"
+                        placeholder="Ask a technical question..."
+                        required
+                    ></textarea>
+
+                    <button
+                        id="send-button"
+                        type="submit"
+                        disabled
+                    >
+                        Send
+                    </button>
+                </form>
+            </section>
+
+            <aside
+                class="inspection-panel"
+                aria-label="Execution inspection"
+            >
+                <section>
+                    <h2>Agent Execution Trace</h2>
+                    <div id="trace-log"></div>
+                </section>
+
+                <section>
+                    <h2>LLM Routing</h2>
+                    <div id="routing-log"></div>
+                </section>
+
+                <section>
+                    <h2>Sources</h2>
+                    <div id="citations"></div>
+                </section>
+            </aside>
+        </main>
+    </div>
+</body>
+</html>
