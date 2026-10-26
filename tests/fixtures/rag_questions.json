@@ -1,0 +1,77 @@
+[
+  {
+    "id": "raft-election-trigger",
+    "question": "According to the Raft paper, what causes a follower to start an election, and what does it do when becoming a candidate?",
+    "reference": "A follower starts an election when it receives no communication during its election timeout. It increments its current term, becomes a candidate, votes for itself, and sends RequestVote RPCs in parallel to the other servers. A candidate wins by receiving votes from a majority of the full cluster for the same term.",
+    "sources": [{"file": "raft.pdf", "pages": [6]}]
+  },
+  {
+    "id": "raft-randomized-timeouts",
+    "question": "Why does Raft randomize election timeouts, and how does it handle a split vote?",
+    "reference": "Randomized election timeouts spread out when servers become candidates, making it likely that one candidate wins and sends heartbeats before others time out. After a split vote, candidates time out, increment their terms, and begin new elections. Each candidate restarts its randomized timeout at the start of an election to reduce repeated split votes.",
+    "sources": [{"file": "raft.pdf", "pages": [6]}]
+  },
+  {
+    "id": "gfs-chunk-size-tradeoffs",
+    "question": "What chunk size does GFS use, what three advantages does this size provide, and what hot-spot drawback does the paper describe?",
+    "reference": "GFS uses 64 MB chunks. Large chunks reduce client interactions with the master, reduce network overhead by allowing persistent TCP connections to chunkservers, and reduce metadata stored at the master. A small file can occupy only one or a few chunks, so many simultaneous accesses can overload the few chunkservers holding it. Lazy space allocation reduces internal-fragmentation waste but does not remove this hot-spot risk.",
+    "sources": [{"file": "gfs-sosp2003.pdf", "pages": [3]}]
+  },
+  {
+    "id": "gfs-read-path",
+    "question": "In GFS, does file data pass through the master during a read, and how does a client locate the data?",
+    "reference": "File data does not pass through the master. The client converts the file name and byte offset into a chunk index and asks the master for the chunk handle and replica locations. It caches that information and reads the requested byte range directly from a chunkserver replica. Further reads of the same chunk can reuse the cached location information.",
+    "sources": [{"file": "gfs-sosp2003.pdf", "pages": [3]}]
+  },
+  {
+    "id": "gfs-metadata-persistence",
+    "question": "Which metadata does the GFS master keep, and how does persistence differ for namespaces and chunk locations?",
+    "reference": "The master keeps file and chunk namespaces, mappings from files to chunks, and locations of chunk replicas in memory. Namespaces and file-to-chunk mappings are also persisted through an operation log stored locally and replicated remotely. Chunk locations are not persisted; the master asks chunkservers for their chunks at startup and when a chunkserver joins.",
+    "sources": [{"file": "gfs-sosp2003.pdf", "pages": [3]}]
+  },
+  {
+    "id": "spanner-truetime-interval",
+    "question": "How does Spanner's TrueTime API represent uncertainty, and what does TT.now() guarantee?",
+    "reference": "TrueTime represents time as a bounded interval called TTinterval, with earliest and latest endpoints. TT.now() returns an interval guaranteed to contain the absolute time during its invocation. The instantaneous error bound is half the interval's width, rather than an assertion that the clock gives one exact time.",
+    "sources": [{"file": "Spanner.pdf", "pages": [5]}]
+  },
+  {
+    "id": "spanner-clock-diversity",
+    "question": "Why does Spanner's TrueTime implementation use both GPS and atomic-clock time references?",
+    "reference": "GPS and atomic clocks have different failure modes. GPS can suffer antenna or receiver failures, radio interference, correlated design faults, spoofing, and system outages. Atomic clocks can fail independently of GPS and can drift over time. Using both provides diversity against failures of a single reference type.",
+    "sources": [{"file": "Spanner.pdf", "pages": [5]}]
+  },
+  {
+    "id": "mapreduce-programming-model",
+    "question": "What do the user-defined Map and Reduce functions receive and produce in the MapReduce programming model?",
+    "reference": "Map receives an input key-value pair and produces intermediate key-value pairs. The library groups intermediate values by their intermediate key. Reduce receives an intermediate key and the values associated with that key, and merges those values into output values. The values are supplied through an iterator so a group need not fit entirely in memory.",
+    "sources": [{"file": "Mapreduce.pdf", "pages": [2]}]
+  },
+  {
+    "id": "borg-master-availability",
+    "question": "How is Borg's logically centralized Borgmaster replicated, and which replica changes cell state?",
+    "reference": "The Borgmaster is logically one process but is replicated five times. Each replica keeps an in-memory copy of most cell state, and state is also recorded in a distributed Paxos-based store on replica disks. One elected master per cell acts as the Paxos leader and handles state-changing operations. A new master is elected when the current one fails.",
+    "sources": [{"file": "Borg.pdf", "pages": [4]}]
+  },
+  {
+    "id": "pbft-state-machine-requirements",
+    "question": "What two requirements does the PBFT paper impose on replicated state machines, and what ordering property does its algorithm ensure?",
+    "reference": "Replicas must be deterministic: an operation with the same arguments in the same state must produce the same result. They must also start in the same state. The algorithm ensures that non-faulty replicas agree on a total order for executing requests despite failures.",
+    "sources": [{"file": "Practical Byzantine Fault Tolerance.pdf", "pages": [3]}]
+  },
+  {
+    "id": "chain-request-routing",
+    "question": "In chain replication, where are queries and updates sent, how do updates propagate, and which server replies?",
+    "reference": "Queries go to the tail and are processed there. Updates go to the head, which processes them and forwards state changes along reliable FIFO links through the chain to the tail. The tail generates and sends replies for both query and update requests. Processing queries and updates serially at the tail provides strong consistency.",
+    "sources": [{"file": "Chain Replication for Supporting High Throughput and Availability.pdf", "pages": [3]}]
+  },
+  {
+    "id": "raft-versus-chain-update-path",
+    "question": "Compare how Raft and chain replication propagate a client update and return its result, using the two papers.",
+    "reference": "In Raft, the leader appends a client command to its log and sends AppendEntries RPCs in parallel to other servers. After the entry is safely replicated, the leader applies it to its state machine and returns the result to the client. In chain replication, an update enters at the head, which forwards state changes sequentially down reliable FIFO links; the tail handles the update and sends the reply. Thus Raft describes leader-driven parallel replication, while chain replication uses a head-to-tail propagation path with tail replies.",
+    "sources": [
+      {"file": "raft.pdf", "pages": [6]},
+      {"file": "Chain Replication for Supporting High Throughput and Availability.pdf", "pages": [3]}
+    ]
+  }
+]
