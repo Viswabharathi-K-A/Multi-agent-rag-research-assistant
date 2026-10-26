@@ -8,11 +8,14 @@ from operator import add
 
 AgentName = Literal["research", "code", "summary"]
 NextNode = Literal["research", "code", "summary", "finish"]
+RetrievalMode = Literal["documents", "web", "both"]
 
 
 class AgentTask(TypedDict):
     agent: AgentName
     instruction: str
+    # Used by research tasks; optional for existing tasks and other agents.
+    retrieval_mode: NotRequired[RetrievalMode]
 
 
 class AgentResult(TypedDict):

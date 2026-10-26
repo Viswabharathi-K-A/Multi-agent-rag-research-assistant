@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from app.agents.state import ResearchState
+from app.agents.state import ResearchState, RetrievalMode
 from app.config import get_settings
 
 
@@ -17,7 +17,11 @@ class SupervisorDecision(BaseModel):
         description="Specific task for the selected agent"
     )
     reason: str = Field(
-        description="Why this agent is needed next"
+        description="Why this agent is needed next and, for research, why these sources are appropriate"
+    )
+    retrieval_mode: RetrievalMode = Field(
+        default="documents",
+        description="Research evidence source: documents, web, or both; ignored for other agents",
     )
     final_answer: str = Field(
         default="",
@@ -48,6 +52,20 @@ Rules:
 - If a worker fails, consider an alternative.
 - If the task is complete, select "finish".
 - When finishing, provide a grounded final answer.
+
+Research source selection:
+- Set retrieval_mode whenever selecting the research agent, and explain the
+  source choice in reason.
+- Use "documents" for questions about the provided corpus. This is the default
+  for requests without an explicit source preference or need for current facts.
+- Use "web" for explicit web searches or current information outside the corpus.
+- Use "both" when the request needs document evidence and external information,
+  such as comparing provided documentation with current practices.
+- Respect explicit source restrictions: "only the provided documents" means
+  documents; "web only" means web. Never broaden those restrictions on failure.
+- If documents lack sufficient evidence, you may delegate web research when
+  the user's source restrictions permit it. Do not claim missing evidence exists.
+- For code, summary, or finish decisions, retrieval_mode has no effect.
 """
 
 
@@ -72,8 +90,7 @@ def supervisor_node(state: ResearchState) -> dict:
 
     settings = get_settings()
 
-    # Provider/model creation will be implemented
-    # in the shared LLM configuration module.
+    # Use the shared provider factory.
     from app.llm import get_agent_llm
 
     llm = get_agent_llm("supervisor")
@@ -117,7 +134,10 @@ def supervisor_node(state: ResearchState) -> dict:
             "finish" if decision.next_agent == "finish"
             else "delegate"
         ),
-        "detail": decision.instruction,
+        "detail": (
+            f"{decision.instruction} (retrieval_mode={decision.retrieval_mode})"
+            if decision.next_agent == "research" else decision.instruction
+        ),
         "provider": provider,
         "model": model,
         "reason": decision.reason,
@@ -137,5 +157,7 @@ def supervisor_node(state: ResearchState) -> dict:
             "agent": decision.next_agent,
             "instruction": decision.instruction,
         }
+        if decision.next_agent == "research":
+            update["current_task"]["retrieval_mode"] = decision.retrieval_mode
 
     return update
