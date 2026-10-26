@@ -11,3 +11,7 @@ htmlcov
 *.log
 .DS_Store
 .vscode
+
+
+# Assignment reference material
+docs/assignment2.pdf

@@ -1,6 +1,7 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,13 +22,25 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
 
-    openai_api_key: str = ""
-    openai_model: str = ""
+    openai_api_key: str | None = None
+    google_api_key: str | None = None
 
-    google_api_key: str = ""
-    gemini_model: str = ""
+    supervisor_provider: Literal["openai", "google"] = "openai"
+    supervisor_model: str = "gpt-5.1"
 
-    tavily_api_key: str = ""
+    research_provider: Literal["openai", "google"] = "google"
+    research_model: str = "gemini-2.5-flash"
+
+    code_provider: Literal["openai", "google"] = "openai"
+    code_model: str = "gpt-5.1"
+
+    summary_provider: Literal["openai", "google"] = "google"
+    summary_model: str = "gemini-2.5-flash"
+
+    tavily_api_key: str | None = None
+    tavily_timeout_seconds: float = Field(default=30, gt=0, le=120)
+    tavily_max_results: int = Field(default=5, ge=1, le=10)
+    research_timeout_seconds: float = Field(default=60, gt=0, le=180)
 
     chroma_persist_dir: Path = Path("./data/chroma_index")
     chroma_collection: str = "technical_documents"
@@ -64,16 +77,16 @@ class Settings(BaseSettings):
     def validate_runtime(self) -> None:
         required = {
             "OPENAI_API_KEY": self.openai_api_key,
-            "OPENAI_MODEL": self.openai_model,
             "GOOGLE_API_KEY": self.google_api_key,
-            "GEMINI_MODEL": self.gemini_model,
             "TAVILY_API_KEY": self.tavily_api_key,
         }
+        for role in ("supervisor", "research", "code", "summary"):
+            required[f"{role.upper()}_MODEL"] = getattr(self, f"{role}_model")
 
         missing = [
             name
             for name, value in required.items()
-            if not value.strip()
+            if not value or not value.strip()
         ]
 
         if missing:
