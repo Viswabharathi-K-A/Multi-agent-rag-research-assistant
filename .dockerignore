@@ -12,6 +12,7 @@ htmlcov
 .DS_Store
 .vscode
 
+AGENTS.md
 
 # Assignment reference material
 docs/assignment2.pdf

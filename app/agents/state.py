@@ -1,5 +1,5 @@
 
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
 from langgraph.graph.message import add_messages
 from langchain_core.messages import AnyMessage
@@ -21,6 +21,7 @@ class AgentResult(TypedDict):
     content: str
     success: bool
     error: str | None
+    sources: NotRequired[list[dict[str, Any]]]
 
 
 class TraceEvent(TypedDict):
@@ -30,6 +31,7 @@ class TraceEvent(TypedDict):
     provider: str | None
     model: str | None
     reason: str | None
+    tool: NotRequired[str | None]
 
 
 class ResearchState(TypedDict):
