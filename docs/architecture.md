@@ -6,7 +6,7 @@ Updated: 2026-10-26. Assignment basis: `Assignment_2_Description.pdf`, especiall
 
 Implemented: supervisor decisions, Research document/web source selection, corpus ingestion, Chroma retrieval, LCEL evidence augmentation and generation, Tavily Remote MCP, provider configuration, and offline tests. FastAPI currently serves a frontend shell and health endpoint.
 
-The RAG plumbing is implemented and tested with fixtures. A substantial production corpus, real-model retrieval evaluation, Code and Summary workers, complete graph execution, chat/SSE integration, dynamic provider routing, exercised MCP sharing, and Cloud Run deployment remain incomplete.
+The RAG plumbing is implemented and tested with fixtures. The selected local corpus contains 15 distributed systems research PDFs; extraction and chunking have been checked on those files. Production indexing with real embeddings, retrieval evaluation, Code and Summary workers, complete graph execution, chat/SSE integration, dynamic provider routing, exercised MCP sharing, and Cloud Run deployment remain incomplete.
 
 ## Components and orchestration
 
@@ -14,7 +14,7 @@ The RAG plumbing is implemented and tested with fixtures. A substantial producti
 | --- | --- | --- |
 | `app/agents/supervisor.py` | Select a worker, instruction, research retrieval mode, and rationale using structured LLM output. | Implemented; source-selection mapping checked with mocks during development. |
 | `app/agents/research.py` | Retrieve evidence, augment a prompt, generate findings, and return sources and traces. | Implemented; persistent offline tests. |
-| `app/services/document_rag.py` | Load/chunk documents, synchronize a local Chroma collection, and retrieve chunks. | Implemented; real Chroma tested with fake embeddings. |
+| `app/services/document_rag.py` | Load PDF pages, chunk their text, manually rebuild a local Chroma collection, and retrieve chunks. | Implemented; real Chroma tested with fake embeddings. |
 | `app/services/tavily_mcp.py` | Discover and invoke Tavily search through Remote MCP; normalize web evidence. | Implemented; live compatibility unverified. |
 | `app/llm.py` | Construct the configured OpenAI or Google chat model for each role. | Implemented; live model compatibility unverified. |
 | `app/agents/state.py` | Define task, result, trace, and graph-state contracts and reducers. | Implemented. |
@@ -70,7 +70,9 @@ A failed channel returns worker failure without an automatic fallback. In `both`
 
 ## Document ingestion and retrieval
 
-A substantial technical-document corpus is still required. The current repository has test fixtures, not a submission-ready corpus. LangGraph/LangChain documentation was proposed as a corpus; source selection, acquisition, and a reproducible source manifest remain pending. Small fixtures verify behavior but do not satisfy the assignment's corpus requirement.
+The corpus is 15 local distributed systems research papers in `data/corpus`, including Raft, GFS, Spanner, Borg, MapReduce, and Practical Byzantine Fault Tolerance. Research papers are an accepted corpus under assignment section 2.4. A local extraction check produced 1,891 chunks from 249 text-bearing PDF pages. These counts demonstrate extraction, not retrieval quality or answer faithfulness; those require evaluation. The ignored `data/` directory is not included in Git, so corpus acquisition/source attribution and availability for reproduction must be documented before submission.
+
+The strategy is deliberately static: manually place PDFs in the corpus directory and run ingestion when needed. There is no repository downloader, automatic synchronization, manifest, checksum, or commit tracking.
 
 `app/services/document_rag.py` uses the existing configuration:
 
@@ -84,11 +86,11 @@ A substantial technical-document corpus is still required. The current repositor
 
 Relative configured directories resolve against the project root.
 
-1. `load_chunks()` recursively reads nonempty UTF-8 `.md` and `.txt` files, including UTF-8 BOM input. Other extensions are ignored; PDF loading is not implemented. The first Markdown H1 supplies the title, otherwise the filename stem is used.
-2. `RecursiveCharacterTextSplitter` uses 800-character chunks, configured overlap of 120 characters, and start offsets. These are initial settings, not evaluated optima or token limits.
-3. Metadata preserves the corpus-relative path, title, source kind, document ID, chunk ID, and start offset. Document IDs hash the relative path; chunk IDs hash path, title, offset, and content. Unchanged chunks retain IDs; edits or title changes can create new IDs.
+1. `load_chunks()` recursively reads `.pdf` files, case-insensitively, using `pypdf`. Other extensions and symlinks are ignored. The filename stem supplies the title. Empty-password encryption is supported; files requiring a password, corrupt PDFs, and papers with no extractable text fail ingestion. Blank pages are skipped without renumbering later pages. There is no OCR fallback.
+2. Each page is split independently with `RecursiveCharacterTextSplitter`: 800-character chunks, 120-character configured overlap, and start offsets within the page. Chunks never cross pages. These are initial settings, not evaluated optima or token limits. PDF column order, tables, and figures can limit extracted evidence.
+3. Metadata preserves `source` (corpus-relative path), `title`, `page` (1-based PDF file page), `source_kind`, `document_id`, `chunk_id`, and `start_index`. For `raft.pdf`, a document ID is `document:raft.pdf` and a chunk ID is `raft.pdf:p7:c1`. IDs use path and position, not content hashes; changing the text can retain the same ID, so IDs are not historical versions. PDF file pages may differ from printed paper page numbers.
 4. `get_embeddings()` lazily loads the configured Hugging Face model on CPU and caches one model instance. Vectors are normalized. The initial model use may download weights; local embedding uses no paid embedding API. PyTorch and Transformers increase dependency size and cold-start work.
-5. `ingest_documents()` adds new chunks in batches of 64, skips existing IDs without re-embedding, then deletes obsolete IDs in batches. The configured collection is dedicated to this corpus. Empty/unreadable input is rejected before index synchronization. Failed writes propagate; rerunning ingestion can finish an interrupted synchronization.
+5. `ingest_documents()` re-embeds every chunk on each manual run, preparing all vectors in batches of 64 before writing evidence. It then upserts chunks and removes obsolete IDs in batches of 64. The configured collection is dedicated to this corpus. Extraction or embedding failures preserve existing evidence; failed writes propagate and can leave a partial rebuild. No change detection is needed.
 6. `get_vector_store()` checks the collection's embedding-model name against configuration. A changed model name requires a new collection name. Retrieval never creates a missing collection or automatically ingests documents.
 7. `retrieve_documents()` uses a LangChain Chroma retriever for top-k vector similarity and returns `Document` objects with their metadata. There is no relevance cutoff or reranking; similarity alone does not prove a chunk answers the question.
 
@@ -98,7 +100,7 @@ Run ingestion explicitly after preparing the corpus:
 .\.venv\Scripts\python.exe -m app.services.document_rag
 ```
 
-Ingestion is a repeatable synchronization, not an atomic index swap. Run it while requests are stopped. Failed multi-batch ingestion can leave some new chunks alongside old chunks until a successful rerun. Preparing a deployment index and packaging model assets remain deployment work; request handlers should not rebuild the corpus.
+The command prints counts for `documents`, `chunks`, `embedded_chunks`, and `removed_chunks`. Ingestion is a manual rebuild, not an atomic index swap. Run it while requests are stopped. Failed multi-batch writes can leave some new chunks alongside old chunks until a successful rerun. The production PDF index has not yet been built. Preparing a deployment index and packaging model assets remain deployment work; request handlers should not rebuild the corpus.
 
 ## LCEL augmentation and generation
 
@@ -116,9 +118,9 @@ RunnableLambda(retrieve_evidence) | prompt | RunnableLambda(generate_findings) |
 
 All evidence entries contain `source_id`, `source_kind`, `title`, `content`, and `metadata`.
 
-- Document entries use the original chunk ID as `source_id`, include the relative document path as `source`, and retain document/chunk IDs and offsets in metadata. The prompt requests inline `[source_id]` citations.
+- Document entries use the original chunk ID as `source_id`, include the relative PDF path as `source`, and retain page, document/chunk IDs, and offsets in metadata. The prompt requests the supplied title and PDF page alongside inline `[source_id]` citations, for example `(raft, PDF page 7) [raft.pdf:p7:c1]`. It forbids inventing missing page numbers.
 - Web entries retain the Tavily URL as `url` and receive `source_kind="web"`. The prompt requests exact inline URLs. Web IDs such as `web-1` are local to each search, not globally unique across tasks.
-- The structured `AgentResult.sources` preserves snippets. The text appendix lists IDs, titles, and paths/URLs. It does not duplicate snippets within the textual report; the supervisor currently serializes full results, including structured evidence, into its context.
+- The structured `AgentResult.sources` preserves snippets. Python builds the text appendix from retrieved metadata, listing IDs, titles, paths, and available PDF pages, or web URLs. Missing page metadata adds no page reference. It does not duplicate snippets within the textual report; the supervisor currently serializes full results, including structured evidence, into its context.
 
 Source preservation does not validate claim entailment or ensure every generated reference is correct. Document paths are identifiers, not yet clickable document-serving endpoints. Final citation preservation through the pending Summary worker, supervisor output, and frontend still needs verification.
 
@@ -155,13 +157,13 @@ These are static role assignments, not completed cost/capability routing. Resear
 
 ## Verification
 
-Current persistent offline suite: **41 passed** on 2026-10-26:
+Current persistent offline suite: **46 passed** on 2026-10-26:
 
 | File | Cases | What is exercised |
 | --- | --- | --- |
 | `tests/test_health.py` | 4 | Health endpoint, homepage, static CSS, and missing route. |
-| `tests/test_document_rag.py` | 14 | Real temporary Chroma with deterministic fake embeddings: chunks/provenance, retrieval, repeat ingestion, edits/deletions, failures, model mismatch, Unicode, batching, and titles. |
-| `tests/test_research.py` | 23 | Real LCEL with mocked retrieval/model calls: modes, augmentation, citations, validation, empty evidence, failures, text formats, timeout, cancellation, and a small real LangGraph's additive reducers. |
+| `tests/test_document_rag.py` | 17 | Mocked PDF extraction and real temporary Chroma with deterministic fake embeddings: page metadata, blank pages, repeat ingestion, edits/deletions, encryption, corrupt/empty input, embedding failures, model mismatch, and batching. |
+| `tests/test_research.py` | 25 | Real LCEL with mocked retrieval/model calls: modes, augmentation, PDF page/chunk references, missing pages, combined web citations, validation, empty evidence, failures, text formats, timeout, cancellation, and a small real LangGraph's additive reducers. |
 
 Additional one-off development checks exercised supervisor mode mapping with mocked structured decisions and a real temporary Chroma-to-Research-to-LangGraph path with fake embeddings and generation. Those checks are not persistent tests. The current suite does not contain the older `test_research_mcp.py` referenced in prior notes; historical 42-test/MCP coverage claims are not evidence for this checkout.
 
@@ -177,7 +179,7 @@ Pytest excludes the `live` marker by default. No live test is currently shipped.
 
 ## Remaining work
 
-- **P0 - Corpus and evaluation:** Acquire a substantial, attributable technical corpus with reproducible source metadata, build its index with real embeddings, and evaluate chunking/retrieval. Report fixed-question-set RAGAS faithfulness, answer relevance, context precision, and context recall in `docs/evaluation.md`.
+- **P0 - Corpus and evaluation:** Document sources and reproduction instructions for the selected papers, build their index with real embeddings, and evaluate chunking/retrieval. Define fixed paper-specific questions and reference answers grounded in actual passages, retain retrieved chunks and generated answers, and report RAGAS faithfulness, answer relevance, context precision, and context recall with concrete results in `docs/evaluation.md`. Mocked unit tests do not substitute for this evaluation; paid evaluator/generation calls require approval.
 - **P0 - Specialists and orchestration:** Implement distinct Code and Summary workers with appropriate tools/prompts; exercise the full async graph and preserve citations through the final answer.
 - **P0 - Provider routing and MCP sharing:** Implement inspectable cost/capability routing across providers, and have a second agent invoke the same MCP tool in a useful distinct context.
 - **P0 - Delivery:** Connect chat/SSE and citation/trace UI, prepare a Linux-compatible container and Chroma/model assets, deploy to Cloud Run, and complete README, evaluation, and process-log deliverables.

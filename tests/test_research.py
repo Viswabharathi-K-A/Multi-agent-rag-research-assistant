@@ -18,8 +18,8 @@ from app.services.tavily_mcp import RetrievalError
 @pytest.fixture
 def research_case(monkeypatch):
     chunk = Document(page_content="Corpus evidence {with braces}", metadata={
-        "chunk_id": "chunk-abc", "document_id": "doc-abc", "source": "guide.md",
-        "title": "Guide", "start_index": 0, "source_kind": "document",
+        "chunk_id": "raft.pdf:p7:c1", "document_id": "document:raft.pdf", "source": "raft.pdf",
+        "title": "raft", "page": 7, "start_index": 0, "source_kind": "document",
     })
     web_source = {
         "source_id": "web-1", "title": "Web guide",
@@ -77,7 +77,11 @@ async def test_selected_channels_and_evidence_reach_model(research_case, mode):
         source = next(s for s in result["sources"] if s["source_kind"] == "document")
         assert source["content"] == case["chunk"].page_content
         assert source["metadata"] == case["chunk"].metadata
-        assert "[chunk-abc] Guide - guide.md" in result["content"]
+        assert source["metadata"] is not case["chunk"].metadata
+        assert source["title"] == "raft"
+        assert source["metadata"]["page"] == 7
+        assert "[raft.pdf:p7:c1] raft - raft.pdf, PDF page 7" in result["content"]
+        assert "Supported finding [raft.pdf:p7:c1]" in result["content"]
         assert "chroma_retrieval" in tools
     else:
         case["documents"].assert_not_called()
@@ -86,6 +90,7 @@ async def test_selected_channels_and_evidence_reach_model(research_case, mode):
         source = next(s for s in result["sources"] if s["source_kind"] == "web")
         assert source == {**case["web_source"], "source_kind": "web"}
         assert case["web_source"]["url"] in result["content"]
+        assert "[web-1] Web guide - https://example.com/guide" in result["content"]
         assert "source_kind" not in case["web_source"]
         assert "tavily_search" in tools
     else:
@@ -94,6 +99,31 @@ async def test_selected_channels_and_evidence_reach_model(research_case, mode):
     case["model"].ainvoke.assert_awaited_once()
     assert all(event["provider"] == "google" for event in output["trace"])
     assert all(event["model"] == "mock-model" for event in output["trace"])
+
+
+@pytest.mark.asyncio
+async def test_missing_page_does_not_add_a_page_reference(research_case):
+    del research_case["chunk"].metadata["page"]
+    result = (await research.research_node(research_case["state"]))["results"][0]
+    assert result["success"]
+    assert "[raft.pdf:p7:c1] raft - raft.pdf" in result["content"]
+    assert "PDF page" not in result["content"]
+    assert "page" not in research_case["prompts"][0]["sources"][0]["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_chunks_from_same_paper_keep_distinct_page_references(research_case):
+    second_chunk = Document(page_content="Evidence from the next page", metadata={
+        **research_case["chunk"].metadata, "page": 8, "chunk_id": "raft.pdf:p8:c1",
+    })
+    research_case["documents"].return_value.append(second_chunk)
+    result = (await research.research_node(research_case["state"]))["results"][0]
+    assert result["success"]
+    assert "[raft.pdf:p7:c1] raft - raft.pdf, PDF page 7" in result["content"]
+    assert "[raft.pdf:p8:c1] raft - raft.pdf, PDF page 8" in result["content"]
+    sources = research_case["prompts"][0]["sources"]
+    assert [source["metadata"]["page"] for source in sources] == [7, 8]
+    assert [source["source_id"] for source in sources] == ["raft.pdf:p7:c1", "raft.pdf:p8:c1"]
 
 
 @pytest.mark.asyncio
@@ -162,7 +192,7 @@ async def test_web_failure_preserves_collected_document_evidence(research_case):
     research_case["web"].side_effect = RetrievalError("Tavily MCP request failed")
     result = (await research.research_node(research_case["state"]))["results"][0]
     assert not result["success"]
-    assert result["sources"][0]["source_id"] == "chunk-abc"
+    assert result["sources"][0]["source_id"] == "raft.pdf:p7:c1"
     assert result["content"] == ""
     research_case["factory"].assert_not_called()
 
@@ -172,22 +202,22 @@ async def test_model_failure_preserves_evidence_without_exposing_details(researc
     research_case["model"].ainvoke.side_effect = RuntimeError("private upstream details")
     result = (await research.research_node(research_case["state"]))["results"][0]
     assert not result["success"]
-    assert result["sources"][0]["source_id"] == "chunk-abc"
+    assert result["sources"][0]["source_id"] == "raft.pdf:p7:c1"
     assert "private" not in result["error"]
     assert result["content"] == ""
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("response", [
-    "Supported finding [chunk-abc]",
-    [{"type": "text", "text": "Supported finding [chunk-abc]"}],
+    "Supported finding [raft.pdf:p7:c1]",
+    [{"type": "text", "text": "Supported finding [raft.pdf:p7:c1]"}],
 ])
 async def test_model_text_formats(research_case, response):
     research_case["model"].ainvoke.side_effect = None
     research_case["model"].ainvoke.return_value = AIMessage(content=response)
     result = (await research.research_node(research_case["state"]))["results"][0]
     assert result["success"]
-    assert result["content"].startswith("Supported finding [chunk-abc]")
+    assert result["content"].startswith("Supported finding [raft.pdf:p7:c1]")
 
 
 @pytest.mark.asyncio
