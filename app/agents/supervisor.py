@@ -75,7 +75,6 @@ def build_supervisor_context(state: ResearchState) -> str:
     context = {
         "user_query": state["user_query"],
         "completed_results": state.get("results", []),
-        "pending_tasks": state.get("tasks", []),
         "iteration": state.get("iteration", 0),
         "max_iterations": state.get(
             "max_iterations", 8
@@ -85,7 +84,7 @@ def build_supervisor_context(state: ResearchState) -> str:
     return json.dumps(context, ensure_ascii=False)
 
 
-def supervisor_node(state: ResearchState) -> dict:
+async def supervisor_node(state: ResearchState) -> dict:
     """Choose the next agent using an LLM."""
 
     settings = get_settings()
@@ -118,7 +117,7 @@ def supervisor_node(state: ResearchState) -> dict:
             }],
         }
 
-    decision = structured_llm.invoke([
+    decision = await structured_llm.ainvoke([
         SystemMessage(content=SUPERVISOR_PROMPT),
         HumanMessage(
             content=build_supervisor_context(state)

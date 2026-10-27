@@ -1,4 +1,4 @@
-﻿# Architecture and implementation status
+# Architecture and implementation status
 
 Updated: 2026-10-27. Requirements: `Assignment_2_Description.pdf`, especially sections 2, 3, 5, 6, and rubric 7.2, interpreted alongside the TA clarification supplied by the project owner.
 
@@ -47,13 +47,13 @@ This is a central supervisor pattern. Each worker has a distinct prompt and tool
 | `AgentTask` | `agent`, `instruction`, optional `retrieval_mode` (`documents`, `web`, `both`). |
 | `AgentResult` | `agent`, `instruction`, `content`, `success`, `error`, optional structured `sources`. |
 | `TraceEvent` | `node`, `action`, `detail`, `provider`, `model`, `reason`, optional `tool`. |
-| `ResearchState` | `user_query`, `messages`, `tasks`, `current_task`, `next_agent`, `results`, `final_answer`, `iteration`, `max_iterations`, `trace`. |
+| `ResearchState` | `user_query`, `current_task`, `next_agent`, `results`, `final_answer`, `iteration`, `max_iterations`, `trace`. |
 
-The supervisor context reads `user_query`, `results` (including worker success/error and evidence), `tasks`, `iteration`, and `max_iterations`. The LLM selects `next_agent`, an instruction, a reason, a research retrieval mode when applicable, and a final answer when finished. `tasks` is included in context but the current supervisor does not populate or consume a queued plan. `messages` is available in the schema but is not included in the supervisor context. The conditional edge reads `next_agent` to dispatch to a worker or end execution.
+The supervisor context reads `user_query`, `results` (including worker success/error and evidence), `iteration`, and `max_iterations`. The LLM selects `next_agent`, an instruction, a reason, a research retrieval mode when applicable, and a final answer when finished. It delegates one `current_task` at a time, then reviews the worker result before deciding again; there is no queued task plan. The unused `tasks` state field and `pending_tasks` context entry were removed. The conditional edge reads `next_agent` to dispatch to a worker or end execution.
 
 After every worker, the supervisor LLM reviews accumulated results and chooses again. There is no fixed Research -> Code -> Summary sequence. Its prompt asks it to consider alternatives after failures and avoid unnecessary delegation. At the iteration limit, code ends the workflow with an incomplete-results notice. This limit does not synthesize a partial answer. The TA clarification allows state-based dispatch after an LLM-generated plan without consulting the LLM after every worker; our approach retains an LLM decision after every worker, trading additional calls and latency for reconsideration based on returned evidence.
 
-`results` and `trace` use additive reducers; workers return only new entries. `messages` uses `add_messages`. TypedDict shapes do not enforce runtime validation; supervisor decisions use Pydantic structured output and workers validate their delegated tasks.
+`results` and `trace` use additive reducers; workers return only new entries. The unused shared `messages` field was removed; workers construct their model messages locally. LangGraph message streaming uses model callbacks and does not require a shared conversation-history field. TypedDict shapes do not enforce runtime validation; supervisor decisions use Pydantic structured output and workers validate their delegated tasks.
 
 ### Failure handling
 

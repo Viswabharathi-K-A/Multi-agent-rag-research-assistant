@@ -1,7 +1,7 @@
 """Offline supervisor tests; model construction and generation are mocked."""
 
 import json
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -15,7 +15,7 @@ from app.config import Settings
 def case(monkeypatch):
     settings = Settings(_env_file=None, supervisor_provider="openai",
                         supervisor_model="mock-supervisor")
-    structured = Mock()
+    structured = Mock(ainvoke=AsyncMock())
     model = Mock()
     model.with_structured_output.return_value = structured
     factory = Mock(return_value=model)
@@ -29,43 +29,45 @@ def case(monkeypatch):
 def test_context_defaults():
     context = json.loads(supervisor.build_supervisor_context({"user_query": "Explain Raft"}))
     assert context == {"user_query": "Explain Raft", "completed_results": [],
-                       "pending_tasks": [], "iteration": 0, "max_iterations": 8}
+                       "iteration": 0, "max_iterations": 8}
 
 
-def test_worker_failure_and_sources_reach_model(case):
+@pytest.mark.asyncio
+async def test_worker_failure_and_sources_reach_model(case):
     result = {"agent": "research", "instruction": "Find election evidence",
               "content": "", "success": False, "error": "Web retrieval failed",
               "sources": [{"source_id": "raft.pdf:p6:c1", "content": "Retained evidence"}]}
     task = {"agent": "summary", "instruction": "Summarize retained evidence"}
-    case["state"].update(results=[result], tasks=[task])
-    case["structured"].invoke.return_value = supervisor.SupervisorDecision(
+    case["state"]["results"] = [result]
+    case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
         next_agent="summary", instruction=task["instruction"], reason="Use retained evidence")
 
-    output = supervisor.supervisor_node(case["state"])
+    output = await supervisor.supervisor_node(case["state"])
 
-    messages = case["structured"].invoke.call_args.args[0]
+    messages = case["structured"].ainvoke.call_args.args[0]
     assert isinstance(messages[0], SystemMessage)
     assert messages[0].content == supervisor.SUPERVISOR_PROMPT
     assert isinstance(messages[1], HumanMessage)
     assert json.loads(messages[1].content) == {
         "user_query": "Explain Raft", "completed_results": [result],
-        "pending_tasks": [task], "iteration": 2, "max_iterations": 8,
+        "iteration": 2, "max_iterations": 8,
     }
     assert output["next_agent"] == "summary"
     assert case["state"]["results"] == [result]
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("agent,mode", [
     ("research", "documents"), ("research", "web"), ("research", "both"),
     ("code", "both"), ("summary", "both"),
 ])
-def test_delegation_preserves_task_and_trace(case, agent, mode):
+async def test_delegation_preserves_task_and_trace(case, agent, mode):
     decision = supervisor.SupervisorDecision(
         next_agent=agent, instruction="Review relevant evidence",
         reason="This specialist is needed for the request", retrieval_mode=mode)
-    case["structured"].invoke.return_value = decision
+    case["structured"].ainvoke.return_value = decision
 
-    output = supervisor.supervisor_node(case["state"])
+    output = await supervisor.supervisor_node(case["state"])
 
     expected_task = {"agent": agent, "instruction": decision.instruction}
     if agent == "research":
@@ -86,17 +88,18 @@ def test_delegation_preserves_task_and_trace(case, agent, mode):
         assert f"retrieval_mode={mode}" in trace["detail"]
     case["factory"].assert_called_once_with("supervisor")
     case["model"].with_structured_output.assert_called_once_with(supervisor.SupervisorDecision)
-    case["structured"].invoke.assert_called_once()
+    case["structured"].ainvoke.assert_awaited_once()
 
 
-def test_finish_clears_task_and_preserves_answer_citation(case):
+@pytest.mark.asyncio
+async def test_finish_clears_task_and_preserves_answer_citation(case):
     answer = "Raft election findings [raft.pdf:p6:c1]"
     case["state"]["current_task"] = {"agent": "research", "instruction": "Find evidence"}
-    case["structured"].invoke.return_value = supervisor.SupervisorDecision(
+    case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
         next_agent="finish", instruction="", reason="Evidence answers the question",
         final_answer=answer)
 
-    output = supervisor.supervisor_node(case["state"])
+    output = await supervisor.supervisor_node(case["state"])
 
     assert output["next_agent"] == "finish"
     assert output["current_task"] is None
@@ -109,11 +112,12 @@ def test_finish_clears_task_and_preserves_answer_citation(case):
     assert "Evidence answers the question" in trace["reason"]
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("iteration", [8, 9])
-def test_iteration_limit_stops_without_generation(case, iteration):
+async def test_iteration_limit_stops_without_generation(case, iteration):
     case["state"]["iteration"] = iteration
 
-    output = supervisor.supervisor_node(case["state"])
+    output = await supervisor.supervisor_node(case["state"])
 
     assert output["next_agent"] == "finish"
     assert "incomplete" in output["final_answer"]
@@ -121,4 +125,4 @@ def test_iteration_limit_stops_without_generation(case, iteration):
     trace = output["trace"][0]
     assert trace["action"] == "limit_reached"
     assert trace["provider"] is None and trace["model"] is None
-    case["structured"].invoke.assert_not_called()
+    case["structured"].ainvoke.assert_not_called()

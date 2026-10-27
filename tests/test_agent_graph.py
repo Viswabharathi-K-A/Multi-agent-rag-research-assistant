@@ -28,7 +28,7 @@ def case(monkeypatch):
         content=f"{role} findings [raft.pdf:p6:c1]")))
         for role in ("research", "code", "summary")}
     models["code"].bind_tools.return_value = models["code"]
-    structured = Mock()
+    structured = Mock(ainvoke=AsyncMock())
     supervisor_model = Mock()
     supervisor_model.with_structured_output.return_value = structured
     models["supervisor"] = supervisor_model
@@ -67,7 +67,7 @@ async def test_all_workers_run_and_preserve_evidence_and_trace(case):
             next_agent="finish", instruction="", reason="All requested work succeeded",
             final_answer=results[-1]["content"])
 
-    case["structured"].invoke.side_effect = decide
+    case["structured"].ainvoke.side_effect = decide
     output = await build_agent_graph().ainvoke(case["state"])
 
     assert [result["agent"] for result in output["results"]] == ["research", "code", "summary"]
@@ -113,7 +113,7 @@ async def test_worker_model_failure_returns_to_supervisor_and_finishes(case, age
             next_agent="finish", instruction="", reason="Report the worker failure honestly",
             final_answer="The requested task could not be completed.")
 
-    case["structured"].invoke.side_effect = decide
+    case["structured"].ainvoke.side_effect = decide
     output = await build_agent_graph().ainvoke(case["state"])
 
     assert len(case["contexts"]) == 2

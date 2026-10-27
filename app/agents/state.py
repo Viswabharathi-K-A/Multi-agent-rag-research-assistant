@@ -1,8 +1,6 @@
 
 from typing import Annotated, Any, Literal, NotRequired, TypedDict
 
-from langgraph.graph.message import add_messages
-from langchain_core.messages import AnyMessage
 from operator import add
 
 
@@ -41,11 +39,7 @@ class ResearchState(TypedDict):
     # Original request
     user_query: str
 
-    # Conversation history
-    messages: Annotated[list[AnyMessage], add_messages]
-
     # Supervisor planning
-    tasks: list[AgentTask]
     current_task: AgentTask | None
     next_agent: NextNode
 
