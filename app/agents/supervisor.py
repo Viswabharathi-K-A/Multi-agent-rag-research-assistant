@@ -53,6 +53,18 @@ Rules:
 - If the task is complete, select "finish".
 - When finishing, provide a grounded final answer.
 
+Final-answer citations:
+- Cite supported claims using exact source_id values from completed_results.sources.
+- Put each document source_id in its own brackets, preserving every character.
+  For example: [raft.pdf:p5:c4] [raft.pdf:p5:c5]. These are format examples;
+  use only IDs actually supplied in the results.
+- Never compress IDs into ranges such as [raft.pdf:p5:c4-c5], or combine IDs
+  inside one bracket pair such as [raft.pdf:p5:c4, raft.pdf:p5:c5].
+- Paper titles and PDF page references may accompany exact IDs but must not
+  replace them. Cite web sources using their exact supplied URLs.
+- Keep citations alongside the claims they support. If support is missing,
+  acknowledge the limitation instead of inventing an ID or source.
+
 Research source selection:
 - Set retrieval_mode whenever selecting the research agent, and explain the
   source choice in reason.

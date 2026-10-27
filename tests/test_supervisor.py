@@ -92,8 +92,23 @@ async def test_delegation_preserves_task_and_trace(case, agent, mode):
 
 
 @pytest.mark.asyncio
-async def test_finish_clears_task_and_preserves_answer_citation(case):
-    answer = "Raft election findings [raft.pdf:p6:c1]"
+@pytest.mark.parametrize("document_refs", [
+    [("raft.pdf:p5:c4", 5), ("raft.pdf:p5:c5", 5)],
+    [("raft.pdf:p4:c1", 4), ("raft.pdf:p8:c7", 8)],
+])
+async def test_finish_preserves_separate_citations_and_source_context(case, document_refs):
+    sources = [{"source_id": source_id, "source_kind": "document",
+                "source": "raft.pdf", "title": "Raft", "content": "Election evidence",
+                "metadata": {"chunk_id": source_id, "page": page}}
+               for source_id, page in document_refs]
+    url = "https://example.com/raft?section=election&version=1"
+    sources.append({"source_id": "web-1", "source_kind": "web", "url": url,
+                    "title": "Technical reference", "content": "External evidence", "metadata": {}})
+    answer = "Raft election findings " + " ".join(f"[{source_id}]" for source_id, _ in document_refs)
+    answer += f"\nTechnical reference: {url}"
+    result = {"agent": "research", "instruction": "Find evidence", "content": answer,
+              "success": True, "error": None, "sources": sources}
+    case["state"]["results"] = [result]
     case["state"]["current_task"] = {"agent": "research", "instruction": "Find evidence"}
     case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
         next_agent="finish", instruction="", reason="Evidence answers the question",
@@ -104,6 +119,12 @@ async def test_finish_clears_task_and_preserves_answer_citation(case):
     assert output["next_agent"] == "finish"
     assert output["current_task"] is None
     assert output["final_answer"] == answer
+    messages = case["structured"].ainvoke.call_args.args[0]
+    assert messages[0].content == supervisor.SUPERVISOR_PROMPT
+    context = json.loads(messages[1].content)
+    assert context["completed_results"] == [result]
+    assert case["state"]["results"] == [result]
+    assert "results" not in output
     assert output["iteration"] == 3
     trace = output["trace"][0]
     assert trace["action"] == "finish"
