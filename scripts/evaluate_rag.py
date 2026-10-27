@@ -1,12 +1,13 @@
-"""Score saved Research answers in the separate evaluation environment.
+"""Score saved Research answers using the shared application/evaluation environment.
 
-Run from the project root with data/evaluation/venv/Scripts/python.exe:
-  -m scripts.evaluate_rag --input data/evaluation/rag_answers.jsonl
-  --output data/evaluation/ragas_scores.json --judge-model MODEL
+Run from the project root with .venv/Scripts/python.exe:
+  -m scripts.evaluate_rag --input data/evaluation/full12_continuation_answers.jsonl
+  --output data/evaluation/new_continuation_scores.json --judge-model MODEL
   --embedding-model MODEL --run-live
 
 Live scoring uses OpenAI generation and embedding APIs. Model IDs must be chosen
 explicitly and API costs approved first. This script never regenerates answers.
+Choose an existing collector answer file for --input and a new path for --output.
 """
 
 import argparse

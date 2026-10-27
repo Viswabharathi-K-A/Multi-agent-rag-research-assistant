@@ -12,7 +12,7 @@ Two complete, live 12-question evaluations are preserved below. Both generated 1
 - Corpus/index: 15 distributed systems PDFs, 249 text-bearing pages, 1,891 chunks in local Chroma. Each PDF page is split independently into up to 800 characters with 120-character configured overlap.
 - Corpus/query embeddings: local `sentence-transformers/all-MiniLM-L6-v2`, CPU, normalized vectors.
 - Answer generation: Google `gemini-3.5-flash-lite`, using the same Research prompt in both runs. The SDK warns that the configured temperature is ignored because this model uses fixed sampling defaults.
-- Evaluator: RAGAS `0.4.3`, OpenAI judge `gpt-4.1-mini`, and evaluation embeddings `text-embedding-3-small`. Evaluation embeddings are separate from the local corpus embeddings. Pinned dependencies and environment setup are in [requirements-evaluation.txt](../requirements-evaluation.txt).
+- Evaluator: RAGAS `0.4.3`, OpenAI judge `gpt-4.1-mini`, and evaluation embeddings `text-embedding-3-small`. Evaluation embeddings are separate from the local corpus embeddings. Pinned dependencies and environment setup are in [requirements.txt](../requirements.txt).
 - Metrics: `Faithfulness`, `ResponseRelevancy` (output key `answer_relevancy`), `LLMContextPrecisionWithReference`, and `LLMContextRecall` (output key `context_recall`). Means below are unweighted across all 12 questions.
 - Collection uses [collect_rag_answers.py](../scripts/collect_rag_answers.py); scoring uses [evaluate_rag.py](../scripts/evaluate_rag.py). Reference answers are never supplied to the Research generator. Scoring receives the findings with inline citations, excluding Python's automatically appended source inventory.
 - Gemini calls were paced with at least five seconds between worker starts using a run-specific wrapper. Cached corpus embeddings were warmed before timed retrieval. This pacing and warm-up are not built into the collector CLI.
@@ -81,15 +81,19 @@ The raw local artifacts are:
 
 Collector rows preserve generated responses, retrieved text, source metadata, references, provider/model, status, duration, and trace. Scorer files preserve full-precision per-question scores, averages, evaluator settings, timestamps, and scoring duration. The `data/` directory is ignored by Git: this report preserves both numeric evaluations, but the raw artifacts and corpus must be supplied separately for submission/reproduction. They are not bundled by these links or by a Git checkout.
 
-After preparing the corpus/index, installing each environment's pinned dependencies, and configuring credentials, collection and scoring use this shape:
+After preparing the corpus/index, installing the shared environment's pinned dependencies, and configuring credentials, collection and scoring use this shape:
 
 ```powershell
 # Live calls incur quota/cost. Use a fresh output path and obtain approval first.
 .\.venv\Scripts\python.exe -m scripts.collect_rag_answers --run-live --output data/evaluation/new_answers.jsonl
-.\data\evaluation\venv\Scripts\python.exe -m scripts.evaluate_rag --input data/evaluation/new_answers.jsonl --output data/evaluation/new_scores.json --judge-model gpt-4.1-mini --embedding-model text-embedding-3-small --run-live
+.\.venv\Scripts\python.exe -m scripts.evaluate_rag --input data/evaluation/new_answers.jsonl --output data/evaluation/new_scores.json --judge-model gpt-4.1-mini --embedding-model text-embedding-3-small --run-live
 ```
 
 Apply the pacing/warm-up described above when reproducing these runs. Current code reproduces the continuation strategy; the baseline was measured before continuation was added. Existing output files are never overwritten. No live evaluation runs as part of normal pytest.
+
+## Dependency consolidation
+
+The recorded runs originally used separate application and scoring environments to avoid dependency conflicts. On 2026-10-27 the project consolidated into one `requirements.txt` and the main `.venv`, after a clean temporary environment passed all 96 offline tests, RAGAS metric imports, graph compilation, provider construction, and tool binding. The shared set uses OpenAI SDK 2.54.0, jiter 0.14.0, pydantic-settings 2.16.1, and python-dotenv 1.2.4. Configured generation/judge model IDs did not change. The historical scores above were not regenerated during consolidation. The former separate scoring environment used different transitive pins; these results are preserved as measured, not claimed as new measurements under the consolidated environment. Linux/Cloud Run compatibility and live SDK calls still need validation.
 
 ## Limitations and remaining required measurements
 

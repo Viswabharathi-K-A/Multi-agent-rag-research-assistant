@@ -189,3 +189,13 @@ Pytest excludes the `live` marker by default. No live test is currently shipped.
 - **P0 - Delivery:** Connect chat/SSE and citation/trace UI, prepare a Linux-compatible container and Chroma/model assets, deploy to Cloud Run, and complete README, evaluation, and process-log deliverables.
 - **P1 - Persistent integration coverage:** Add supervisor source-selection and full-graph recovery tests as those components become operational. Restore focused MCP transport/schema/response tests for the current service and separately budget any live compatibility check.
 - **P1 - Grounding and reliability:** Validate source references, bound workflow/context costs, measure cold/warm latency, and review provider retries. Citation-reference checks alone cannot establish factual entailment.
+
+## Shared dependency environment
+
+As of 2026-10-27, application execution, offline tests, answer collection, and RAGAS scoring use the same Python 3.13 `.venv`, installed from `requirements.txt`. There is no separate evaluation requirements file. The combined set was validated in a clean temporary environment with 96 passing offline tests, RAGAS imports, graph compilation, and offline provider/tool construction. OpenAI SDK 2.54.0 and jiter 0.14.0 resolve the Instructor/RAGAS conflict; pydantic-settings 2.16.1 and python-dotenv 1.2.4 satisfy the combined dependencies. LangChain Community 0.3.31 retains a module RAGAS imports. Model IDs are independent of SDK versions. Linux/Cloud Run installation and live compatibility of the consolidated SDK set remain unverified; existing RAGAS measurements are preserved in [evaluation.md](evaluation.md).
+
+```powershell
+py -3.13 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
+```
