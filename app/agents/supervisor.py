@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from app.agents.citations import validate_document_citations
+from app.agents.citations import normalize_document_citations, validate_document_citations
 from app.agents.state import ResearchState, RetrievalMode
 from app.config import get_settings
 
@@ -51,6 +51,9 @@ Rules:
 - Base decisions on the actual request and evidence.
 - Never invent research results or citations.
 - If a worker fails, consider an alternative.
+- Failed results contain failure details, not usable findings or sources. Use
+  only successful results as evidence for final answers. If no successful
+  evidence answers the request, delegate appropriate work or explain the failure.
 - If the task is complete, select "finish".
 - When finishing, provide a grounded final answer.
 
@@ -83,11 +86,24 @@ Research source selection:
 
 
 def build_supervisor_context(state: ResearchState) -> str:
-    """Prepare information for the supervisor LLM."""
+    """Expose successful evidence and failed-task details without changing state."""
+
+    completed_results = []
+    for result in state.get("results", []):
+        if result.get("success"):
+            completed_results.append(result)
+        else:
+            completed_results.append({
+                "agent": result.get("agent"),
+                "instruction": result.get("instruction"),
+                "success": False,
+                "error": result.get("error"),
+                "content": "",
+            })
 
     context = {
         "user_query": state["user_query"],
-        "completed_results": state.get("results", []),
+        "completed_results": completed_results,
         "iteration": state.get("iteration", 0),
         "max_iterations": state.get(
             "max_iterations", 8
@@ -167,13 +183,13 @@ async def supervisor_node(state: ResearchState) -> dict:
 
     if decision.next_agent == "finish":
         update["current_task"] = None
-        update["final_answer"] = decision.final_answer
         sources = []
         for result in state.get("results", []):
             if result.get("success"):
                 sources.extend(result.get("sources", []))
+        update["final_answer"] = normalize_document_citations(decision.final_answer, sources)
         try:
-            validate_document_citations(decision.final_answer, sources)
+            validate_document_citations(update["final_answer"], sources)
         except ValueError as exc:
             update["final_answer"] = (
                 "I could not produce a final answer with valid document citations. "

@@ -1,6 +1,7 @@
 """Offline supervisor tests; model construction and generation are mocked."""
 
 import json
+from copy import deepcopy
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -33,14 +34,15 @@ def test_context_defaults():
 
 
 @pytest.mark.asyncio
-async def test_worker_failure_and_sources_reach_model(case):
+async def test_worker_failure_details_reach_model_without_failed_evidence(case):
     result = {"agent": "research", "instruction": "Find election evidence",
-              "content": "", "success": False, "error": "Web retrieval failed",
+              "content": "Rejected findings", "success": False, "error": "Web retrieval failed",
               "sources": [{"source_id": "raft.pdf:p6:c1", "content": "Retained evidence"}]}
-    task = {"agent": "summary", "instruction": "Summarize retained evidence"}
+    task = {"agent": "summary", "instruction": "Retrieve documents and summarize"}
     case["state"]["results"] = [result]
+    original = deepcopy(case["state"])
     case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
-        next_agent="summary", instruction=task["instruction"], reason="Use retained evidence")
+        next_agent="summary", instruction=task["instruction"], reason="Try document summarization")
 
     output = await supervisor.supervisor_node(case["state"])
 
@@ -49,11 +51,36 @@ async def test_worker_failure_and_sources_reach_model(case):
     assert messages[0].content == supervisor.SUPERVISOR_PROMPT
     assert isinstance(messages[1], HumanMessage)
     assert json.loads(messages[1].content) == {
-        "user_query": "Explain Raft", "completed_results": [result],
+        "user_query": "Explain Raft", "completed_results": [{
+            "agent": "research", "instruction": "Find election evidence",
+            "success": False, "error": "Web retrieval failed", "content": "",
+        }],
         "iteration": 2, "max_iterations": 8,
     }
     assert output["next_agent"] == "summary"
-    assert case["state"]["results"] == [result]
+    assert case["state"] == original
+    case["structured"].ainvoke.assert_awaited_once()
+
+
+def test_mixed_context_preserves_successful_evidence_and_filters_failed_evidence():
+    successful = {"agent": "research", "instruction": "Find evidence", "success": True,
+                  "content": "Finding [raft.pdf:p5:c4]", "error": None,
+                  "sources": [{"source_id": "raft.pdf:p5:c4", "source_kind": "document",
+                               "content": "Successful evidence"}]}
+    failed = {"agent": "code", "instruction": "Analyze code", "success": False,
+              "content": "Rejected output", "error": "Code operation failed",
+              "sources": [{"source_id": "failed.pdf:p1:c1", "source_kind": "document",
+                           "content": "Failed evidence"}]}
+    state = {"user_query": "Explain Raft", "results": [successful, failed]}
+    original = deepcopy(state)
+
+    context = json.loads(supervisor.build_supervisor_context(state))
+
+    assert context["completed_results"] == [successful, {
+        "agent": "code", "instruction": "Analyze code", "success": False,
+        "error": "Code operation failed", "content": "",
+    }]
+    assert state == original
 
 
 @pytest.mark.asyncio
@@ -134,10 +161,35 @@ async def test_finish_preserves_separate_citations_and_source_context(case, docu
 
 
 @pytest.mark.asyncio
+async def test_finish_normalizes_combined_successful_document_citations_without_retry(case):
+    sources = [{"source_kind": "document", "source_id": source_id,
+                "content": "Election evidence"}
+               for source_id in ("raft.pdf:p5:c4", "raft.pdf:p5:c5")]
+    case["state"]["results"] = [{
+        "agent": "research", "success": True, "content": "Research findings", "sources": sources,
+    }]
+    original = deepcopy(case["state"])
+    answer = "Finding [raft.pdf:p5:c4, raft.pdf:p5:c5]."
+    decision = supervisor.SupervisorDecision(
+        next_agent="finish", instruction="", reason="Successful evidence answers the query",
+        final_answer=answer)
+    case["structured"].ainvoke.return_value = decision
+
+    output = await supervisor.supervisor_node(case["state"])
+
+    assert output["final_answer"] == "Finding [raft.pdf:p5:c4] [raft.pdf:p5:c5]."
+    assert output["next_agent"] == "finish" and output["current_task"] is None
+    assert [trace["action"] for trace in output["trace"]] == ["finish"]
+    assert case["state"] == original
+    assert decision.final_answer == answer
+    case["structured"].ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("answer", [
     "Claim [raft.pdf:p5:c4-c5]",
     "Claim [raft.pdf:p5:c4–c5]",
-    "Claim [raft.pdf:p5:c4, raft.pdf:p5:c5]",
+    "Claim [raft.pdf:p5:c4, raft.pdf:p99:c99]",
     "Claim [raft.pdf:p5:c4] and invented [raft.pdf:p99:c99]",
     "Claim without citations",
     "Web only https://example.com/ref",
@@ -190,12 +242,17 @@ async def test_finish_without_successful_document_evidence_preserves_answer(case
 
 
 @pytest.mark.asyncio
-async def test_finish_does_not_accept_ids_only_retained_by_failed_workers(case):
+@pytest.mark.parametrize("answer", [
+    "Claim [raft.pdf:p5:c4]",
+    "Claim [raft.pdf:p5:c4, failed.pdf:p1:c1]",
+])
+async def test_finish_does_not_accept_ids_only_retained_by_failed_workers(case, answer):
     case["state"]["results"] = [{"success": False, "sources": [
-        {"source_kind": "document", "source_id": "raft.pdf:p5:c4"}]}]
+        {"source_kind": "document", "source_id": "raft.pdf:p5:c4"},
+        {"source_kind": "document", "source_id": "failed.pdf:p1:c1"}]}]
     case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
         next_agent="finish", instruction="", reason="Task complete",
-        final_answer="Claim [raft.pdf:p5:c4]")
+        final_answer=answer)
 
     output = await supervisor.supervisor_node(case["state"])
 

@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from app.agents.citations import validate_document_citations
+from app.agents.citations import normalize_document_citations, validate_document_citations
 
 
 @pytest.fixture
@@ -73,3 +73,72 @@ def test_matching_id_on_web_source_is_not_document_evidence():
         validate_document_citations("Claim [raft.pdf:p5:c4]", [
             {"source_kind": "web", "source_id": "raft.pdf:p5:c4"},
         ])
+
+
+@pytest.mark.parametrize("content,expected", [
+    ("Claim [raft.pdf:p5:c4, raft.pdf:p5:c5].",
+     "Claim [raft.pdf:p5:c4] [raft.pdf:p5:c5]."),
+    ("Claim [raft.pdf:p5:c4,\n raft.pdf:p5:c5].",
+     "Claim [raft.pdf:p5:c4] [raft.pdf:p5:c5]."),
+    ("Claim [raft.pdf:p5:c4, Practical Byzantine Fault Tolerance.pdf:p3:c6].",
+     "Claim [raft.pdf:p5:c4] [Practical Byzantine Fault Tolerance.pdf:p3:c6]."),
+    ("[Note] Claim [raft.pdf:p5:c4, raft.pdf:p5:c5]\nhttps://example.com/ref",
+     "[Note] Claim [raft.pdf:p5:c4] [raft.pdf:p5:c5]\nhttps://example.com/ref"),
+])
+def test_normalization_splits_only_supplied_full_ids(sources, content, expected):
+    original = deepcopy(sources)
+
+    normalized = normalize_document_citations(content, sources)
+
+    assert normalized == expected
+    assert validate_document_citations(normalized, sources) is None
+    assert normalize_document_citations(normalized, sources) == normalized
+    assert sources == original
+
+
+@pytest.mark.parametrize("reference", [
+    "raft.pdf:p5:c4, raft.pdf:p99:c99",
+    "raft.pdf:p5:c4-c5",
+    "raft.pdf:p5:c4, c5",
+    "raft.pdf:p5:c4,",
+    "raft.pdf:p5:c4, web-1",
+    "raft.pdf:p5:c4, RAFT.pdf:p5:c5",
+])
+def test_normalization_leaves_invalid_groups_for_validation(sources, reference):
+    content = f"Valid [raft.pdf:p5:c4]. Invalid [{reference}]"
+
+    normalized = normalize_document_citations(content, sources)
+
+    assert normalized == content
+    with pytest.raises(ValueError, match="exact supplied IDs"):
+        validate_document_citations(normalized, sources)
+
+
+def test_normalization_does_not_supply_missing_citations(sources):
+    content = "Finding without references"
+    normalized = normalize_document_citations(content, sources)
+
+    assert normalized == content
+    with pytest.raises(ValueError, match="omitted exact source citations"):
+        validate_document_citations(normalized, sources)
+
+
+def test_normalization_preserves_exact_id_containing_comma():
+    sources = [{"source_id": "Paper, revised.pdf:p2:c1", "source_kind": "document"}]
+    content = "Claim [Paper, revised.pdf:p2:c1]"
+
+    assert normalize_document_citations(content, sources) == content
+    assert validate_document_citations(content, sources) is None
+
+
+@pytest.mark.parametrize("sources", [
+    [],
+    [{"source_id": "raft.pdf:p5:c4", "source_kind": "web"},
+     {"source_id": "raft.pdf:p5:c5", "source_kind": "web"}],
+])
+def test_normalization_does_not_accept_groups_without_document_evidence(sources):
+    content = "Claim [raft.pdf:p5:c4, raft.pdf:p5:c5]"
+
+    assert normalize_document_citations(content, sources) == content
+    with pytest.raises(ValueError, match="exact supplied IDs"):
+        validate_document_citations(content, sources)

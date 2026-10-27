@@ -7,7 +7,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 
-from app.agents.citations import validate_document_citations
+from app.agents.citations import normalize_document_citations, validate_document_citations
 from app.agents.state import AgentResult, ResearchState, TraceEvent
 from app.config import get_settings
 from app.llm import get_agent_llm, get_agent_provider_info
@@ -118,6 +118,7 @@ async def research_node(state: ResearchState) -> dict:
         })).strip()
         if not content:
             raise RetrievalError("Research model returned no text")
+        content = normalize_document_citations(content, sources)
         try:
             validate_document_citations(content, sources)
         except ValueError as exc:

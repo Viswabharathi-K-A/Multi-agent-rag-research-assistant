@@ -6,7 +6,7 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 
-from app.agents.citations import validate_document_citations
+from app.agents.citations import normalize_document_citations, validate_document_citations
 from app.agents.state import AgentResult, ResearchState, TraceEvent
 from app.config import get_settings
 from app.llm import get_agent_llm, get_agent_provider_info
@@ -83,6 +83,7 @@ async def summary_node(state: ResearchState) -> dict:
             content = StrOutputParser().invoke(response).strip()
             if not content:
                 raise RetrievalError("Summary model returned no text")
+            content = normalize_document_citations(content, sources)
             try:
                 validate_document_citations(content, sources)
             except ValueError as exc:

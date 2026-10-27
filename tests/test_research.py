@@ -231,6 +231,34 @@ async def test_blank_model_output_is_failure(research_case):
 
 
 @pytest.mark.asyncio
+async def test_combined_supplied_document_citations_are_normalized(research_case):
+    second_chunk = Document(page_content="Additional election evidence", metadata={
+        **research_case["chunk"].metadata, "chunk_id": "raft.pdf:p7:c2",
+    })
+    research_case["documents"].return_value.append(second_chunk)
+    research_case["model"].ainvoke.side_effect = None
+    research_case["model"].ainvoke.return_value = AIMessage(
+        content="Supported finding [raft.pdf:p7:c1, raft.pdf:p7:c2]."
+    )
+
+    output = await research.research_node(research_case["state"])
+    result = output["results"][0]
+
+    assert result["success"] and result["error"] is None
+    findings = result["content"].split("\n\nRetrieved sources", 1)[0]
+    assert findings == "Supported finding [raft.pdf:p7:c1] [raft.pdf:p7:c2]."
+    assert [source["source_id"] for source in result["sources"]] == [
+        "raft.pdf:p7:c1", "raft.pdf:p7:c2",
+    ]
+    assert [source["content"] for source in result["sources"]] == [
+        research_case["chunk"].page_content, second_chunk.page_content,
+    ]
+    assert second_chunk.metadata["chunk_id"] == "raft.pdf:p7:c2"
+    assert output["trace"][-1]["action"] == "research_completed"
+    research_case["model"].ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("response", [
     "Finding without inline citations",
     "Supported [raft.pdf:p7:c1]. Invented [raft.pdf:p99:c1]",

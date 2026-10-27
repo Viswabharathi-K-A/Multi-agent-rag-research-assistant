@@ -89,6 +89,32 @@ async def test_missing_citations_or_blank_response_fails_and_keeps_evidence(case
 
 
 @pytest.mark.asyncio
+async def test_combined_supplied_document_citations_are_normalized(case):
+    second_chunk = Document(page_content="Additional election evidence", metadata={
+        **case["chunk"].metadata, "chunk_id": "raft.pdf:p6:c2",
+    })
+    case["documents"].return_value.append(second_chunk)
+    case["llm"].ainvoke.return_value = AIMessage(
+        content="Summary [raft.pdf:p6:c1, raft.pdf:p6:c2]."
+    )
+
+    output = await summary.summary_node(case["state"])
+    result = output["results"][0]
+
+    assert result["success"] and result["error"] is None
+    findings = result["content"].split("\n\nSupplied sources", 1)[0]
+    assert findings == "Summary [raft.pdf:p6:c1] [raft.pdf:p6:c2]."
+    assert [source["source_id"] for source in result["sources"]] == [
+        "raft.pdf:p6:c1", "raft.pdf:p6:c2",
+    ]
+    assert [source["content"] for source in result["sources"]] == [
+        case["chunk"].page_content, second_chunk.page_content,
+    ]
+    assert output["trace"][-1]["action"] == "summary_completed"
+    case["llm"].ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("reference", [
     "raft.pdf:p99:c1",
     "raft.pdf:p6:c1-c2",
