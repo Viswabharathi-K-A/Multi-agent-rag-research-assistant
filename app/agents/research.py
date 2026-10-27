@@ -94,7 +94,7 @@ async def research_node(state: ResearchState) -> dict:
         async def generate_findings(prompt):
             """Create and invoke the model only after evidence is available."""
             event("llm_started", "Synthesize supplied document/web evidence",
-                  "Configured research provider/model; dynamic model routing pending")
+                  "Research uses its configured provider for cost-conscious generation grounded in retrieved evidence")
             async with asyncio.timeout(settings.research_timeout_seconds):
                 return await get_agent_llm("research").ainvoke(prompt)
 

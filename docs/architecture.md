@@ -1,201 +1,138 @@
-# Architecture and implementation status
+﻿# Architecture and implementation status
 
-Updated: 2026-10-26. Assignment basis: `Assignment_2_Description.pdf`, especially sections 2.1-2.5, 3.1, 3.3-3.5, and rubric 7.2. This document describes current source code and verification. `architecture_review.md` and `implementation_notes.md` describe earlier development stages.
+Updated: 2026-10-27. Requirements: `Assignment_2_Description.pdf`, especially sections 2, 3, 5, 6, and rubric 7.2, interpreted alongside the TA clarification supplied by the project owner.
 
 ## Current scope
 
-Implemented: supervisor decisions, Research document/web source selection, corpus ingestion, Chroma retrieval, LCEL evidence augmentation and generation, Tavily Remote MCP, provider configuration, and offline tests. FastAPI currently serves a frontend shell and health endpoint.
-
-The RAG plumbing is implemented and tested with fixtures. The selected local corpus contains 15 distributed systems research PDFs; extraction and chunking have been checked on those files. Production indexing with real embeddings, retrieval evaluation, Code and Summary workers, complete graph execution, chat/SSE integration, dynamic provider routing, exercised MCP sharing, and Cloud Run deployment remain incomplete.
+Implemented: three specialized workers, an LLM supervisor, LangGraph construction, document ingestion/retrieval, Research LCEL generation, Tavily Remote MCP access, fixed provider assignments, and offline worker tests. FastAPI serves a frontend shell and health endpoint; chat/SSE and deployed execution remain pending. Research-only live RAGAS runs are recorded in [evaluation.md](evaluation.md); they do not verify the full graph.
 
 ## Components and orchestration
 
-| File | Responsibility | Status |
-| --- | --- | --- |
-| `app/agents/supervisor.py` | Select a worker, instruction, research retrieval mode, and rationale using structured LLM output. | Implemented; source-selection mapping checked with mocks during development. |
-| `app/agents/research.py` | Retrieve evidence, augment a prompt, generate findings, and return sources and traces. | Implemented; persistent offline tests. |
-| `app/services/document_rag.py` | Load PDF pages, chunk their text, manually rebuild a local Chroma collection, and retrieve chunks. | Implemented; real Chroma tested with fake embeddings. |
-| `app/services/tavily_mcp.py` | Discover and invoke Tavily search through Remote MCP; normalize web evidence. | Implemented; live compatibility unverified. |
-| `app/llm.py` | Construct the configured OpenAI or Google chat model for each role. | Implemented; live model compatibility unverified. |
-| `app/agents/state.py` | Define task, result, trace, and graph-state contracts and reducers. | Implemented. |
-| `app/agents/agents.py` | Define supervisor-to-worker routing and worker-to-supervisor edges. | Incomplete: imports missing `code.py` and `summary.py`. |
-| `app/main.py` | Serve static frontend assets and `/health`. | Implemented; no chat/SSE endpoint yet. |
-
-The intended connected flow is below. Research paths execute in isolation and in a small test graph; this diagram does not imply the incomplete production graph runs end to end.
+| File | Responsibility |
+| --- | --- |
+| `app/agents/supervisor.py` | Read state, select the next worker or finish through structured LLM output, and record a delegation reason. |
+| `app/agents/research.py` | Retrieve document/web evidence and generate grounded findings through LCEL. |
+| `app/agents/code.py` | Analyze/generate code with model-selected Python inspection and technical web search. |
+| `app/agents/summary.py` | Condense successful findings; retrieve documents when no successful findings exist. |
+| `app/agents/agents.py` | Compile the graph and route every completed worker back to the supervisor. |
+| `app/agents/state.py` | Define tasks, results, traces, and state reducers. |
+| `app/llm.py` | Construct the configured OpenAI or Google model for each role. |
+| `app/services/document_rag.py` | Load/chunk PDFs, embed/index them in Chroma, and retrieve evidence. |
+| `app/services/tavily_mcp.py` | Discover/invoke Tavily search through Remote MCP and normalize evidence. |
+| `app/main.py` | Serve static assets and `/health`; graph integration is pending. |
 
 ```mermaid
 flowchart TD
-    Q[User query] --> S[LLM supervisor]
-    S -->|instruction and retrieval_mode| R[Research worker]
-    R --> D[Chroma document retrieval]
-    R --> W[Tavily Remote MCP search]
-    D --> E[Evidence with source metadata]
-    W --> E
-    E --> P[Augmented prompt]
-    P --> L[Configured research LLM]
-    L --> O[Findings, sources and trace deltas]
-    R -->|failure and collected evidence| O
-    O --> S
-    S -.-> C[Code worker: pending]
-    S -.-> U[Summary worker: pending]
-    S --> F[Final answer in graph state]
+    Q[User query] --> S[LLM supervisor reads state]
+    S -->|next_agent and instruction| R[Research]
+    S -->|next_agent and instruction| C[Code]
+    S -->|next_agent and instruction| U[Summary]
+    R --> D[Chroma retrieval]
+    R --> T[Tavily Remote MCP]
+    C --> T
+    C --> I[Python AST inspection]
+    U -->|no successful findings| D
+    R -->|result and trace| S
+    C -->|result and trace| S
+    U -->|result and trace| S
+    S -->|finish| F[Final answer in state]
 ```
 
-The intended orchestration pattern is a central supervisor. Code and Summary are planned specialists; the supervisor does not count toward the three-specialist requirement. Research currently has document retrieval and Tavily access; distinct tools/prompts for the other specialists remain to be implemented.
+This is a central supervisor pattern. Each worker has a distinct prompt and tool-access combination. Research selects document/web channels from its delegated retrieval mode. Code can inspect Python syntax/structure without executing supplied code and can request technical web references. Summary uses supplied findings or document retrieval and has no web-search tool. The supervisor does not count toward the three-specialist requirement. The diagram describes implemented graph wiring, not verified deployed execution.
 
-### Shared state
+### State and routing decisions
 
 | Contract | Fields and behavior |
 | --- | --- |
-| `AgentTask` | Required `agent` and `instruction`; optional `retrieval_mode` (`documents`, `web`, `both`). |
-| `AgentResult` | `agent`, `instruction`, `content`, `success`, `error`; optional structured `sources`. |
-| `TraceEvent` | Node, action, detail, provider, model, rationale; optional tool name. |
-| `ResearchState` | Original query, messages, tasks/current task, next agent, results, final answer, iteration limits, and trace. |
+| `AgentTask` | `agent`, `instruction`, optional `retrieval_mode` (`documents`, `web`, `both`). |
+| `AgentResult` | `agent`, `instruction`, `content`, `success`, `error`, optional structured `sources`. |
+| `TraceEvent` | `node`, `action`, `detail`, `provider`, `model`, `reason`, optional `tool`. |
+| `ResearchState` | `user_query`, `messages`, `tasks`, `current_task`, `next_agent`, `results`, `final_answer`, `iteration`, `max_iterations`, `trace`. |
 
-`results` and `trace` use additive reducers. Workers return only new entries, so LangGraph appends them without duplicating history. `messages` uses LangGraph's `add_messages` reducer. TypedDict contracts describe dictionary shapes; they do not enforce runtime validation. The supervisor's Pydantic decision validates its structured retrieval mode, and Research also checks the mode at runtime.
+The supervisor context reads `user_query`, `results` (including worker success/error and evidence), `tasks`, `iteration`, and `max_iterations`. The LLM selects `next_agent`, an instruction, a reason, a research retrieval mode when applicable, and a final answer when finished. `tasks` is included in context but the current supervisor does not populate or consume a queued plan. `messages` is available in the schema but is not included in the supervisor context. The conditional edge reads `next_agent` to dispatch to a worker or end execution.
 
-## Research source selection
+After every worker, the supervisor LLM reviews accumulated results and chooses again. There is no fixed Research -> Code -> Summary sequence. Its prompt asks it to consider alternatives after failures and avoid unnecessary delegation. At the iteration limit, code ends the workflow with an incomplete-results notice. This limit does not synthesize a partial answer. The TA clarification allows state-based dispatch after an LLM-generated plan without consulting the LLM after every worker; our approach retains an LLM decision after every worker, trading additional calls and latency for reconsideration based on returned evidence.
 
-The supervisor prompt asks the LLM to choose evidence sources and explain its choice in `reason`. The selected mode is included in `current_task` and in the supervisor trace detail. Research also traces each retrieval tool.
+`results` and `trace` use additive reducers; workers return only new entries. `messages` uses `add_messages`. TypedDict shapes do not enforce runtime validation; supervisor decisions use Pydantic structured output and workers validate their delegated tasks.
 
-| Mode | Research behavior | Example intent |
+### Failure handling
+
+All three workers catch ordinary exceptions, return `success=False` with safe error text, and preserve collected evidence. Research fails on missing evidence instead of generating unsupported findings. Code reports tool errors back to its model and bounds execution to ten model turns/ten tool calls. Summary rejects blank responses and, when evidence exists, output containing none of the supplied citation identifiers/URLs. This presence check does not validate every claim or citation. Worker cancellation propagates to the caller.
+
+Worker failure results return along the normal edge to the supervisor, where they are visible in `results`. Persistent full-graph tests now verify that a model failure in each worker reaches the next supervisor decision and ends with an honest failure response. These tests use real nodes and graph routing with mocked model/retrieval boundaries; they do not prove live decision quality or successful completion through an alternative worker. The supervisor's own model/configuration exceptions are not caught; worker failure isolation does not imply that provider failures at the supervisor are handled.
+
+## Fixed provider routing
+
+| Role | Default provider/model | Dimension and design rationale |
 | --- | --- | --- |
-| `documents` | Chroma only; also the default when the task omits a mode. | Answer from the provided corpus. |
-| `web` | Tavily MCP only. | Search for current external information. |
-| `both` | Retrieve documents, then search Tavily. | Compare corpus material with current information. |
+| Supervisor | OpenAI / `gpt-5.1` | Capability-based: structured delegation, interpretation of returned evidence/failures, and final grounded synthesis. The supervisor also writes final answers, so its responsibility extends beyond classification. |
+| Research | Google / `gemini-3.5-flash-lite` | Cost-based: routine generation over retrieved evidence; keep repeated research calls economical while grounding them in supplied sources. |
+| Code | OpenAI / `gpt-5.1` | Capability-based: code reasoning and tool-assisted analysis, including choosing inspection/search tools. |
+| Summary | Google / `gemini-3.5-flash-lite` | Cost-based: concise condensation of supplied findings/evidence without independent web research. |
 
-The supervisor prompt defaults ambiguous requests to documents and instructs it to respect explicit source restrictions. Research enforces the delegated mode; it does not independently interpret the original query's source restrictions. Actual LLM selection quality has not been verified live.
+The overall policy is hybrid: capability-oriented orchestration/code work and cost-oriented evidence processing/summarization. These are design rationales, not measured proof that one provider is cheaper or more accurate for this workload. Exact pricing and comparative latency/quality remain evaluation work. Settings/environment overrides can change assignments; changing them requires keeping rationale and verification consistent.
 
-A failed channel returns worker failure without an automatic fallback. In `both` mode, a document failure stops before web retrieval; a later web failure preserves collected document evidence. An empty result list is different from an exception: if one channel returns an empty list and the other supplies evidence, generation can proceed. Missing or empty Chroma indexes raise errors rather than returning empty results. With no evidence at all, Research skips model creation and generation.
+Per the TA clarification and assignment section 6, fixed providers per agent are acceptable. Provider routing occurs through the supervisor's choice of agent; dynamic provider selection for every call is optional. A normal Supervisor -> Research -> Supervisor or Supervisor -> Summary -> Supervisor path calls both OpenAI and Google when generation succeeds. A direct finish, a code-only path, or a worker failure before generation may use only OpenAI. Both providers must demonstrably participate in normal deployed use; merely configuring them or using OpenAI as an offline evaluator is insufficient.
 
-## Document ingestion and retrieval
+Current trace events carry provider/model and a reason. Worker `llm_started` reasons now explain the role's cost-based or capability-based assignment, including each repeated Code model turn. Supervisor decision events include its capability-based provider rationale alongside the LLM's original delegation/source-selection or finish reason. The iteration-limit event has no provider/model because no generation occurs on that branch. Offline tests check supervisor rationale and provider fields, plus provider/model/reason presence across a successful graph run. The future chat/SSE surface must expose these per-call decisions, and live execution must demonstrate both providers in normal use. Dynamic per-call provider routing is optional.
 
-The corpus is 15 local distributed systems research papers in `data/corpus`, including Raft, GFS, Spanner, Borg, MapReduce, and Practical Byzantine Fault Tolerance. Research papers are an accepted corpus under assignment section 2.4. A local extraction check produced 1,891 chunks from 249 text-bearing PDF pages. These counts demonstrate extraction, not retrieval quality or answer faithfulness; those require evaluation. The ignored `data/` directory is not included in Git, so corpus acquisition/source attribution and availability for reproduction must be documented before submission.
+## Document RAG
 
-The strategy is deliberately static: manually place PDFs in the corpus directory and run ingestion when needed. There is no repository downloader, automatic synchronization, manifest, checksum, or commit tracking.
+The selected corpus contains 15 distributed systems PDFs (including Raft, GFS, Spanner, Borg, MapReduce, and PBFT): 249 text-bearing pages and 1,891 chunks. Local indexing and two live Research evaluations are recorded in [evaluation.md](evaluation.md). The ignored `data/` directory is not bundled in Git; corpus attribution/acquisition and reproducible submission packaging remain required.
 
-`app/services/document_rag.py` uses the existing configuration:
+`load_chunks()` recursively reads PDFs with `pypdf`, ignores symlinks/other extensions and blank pages, and splits each page independently into up to 800 characters with configured overlap 120. Corrupt PDFs, PDFs requiring a nonempty password, and textless PDFs fail ingestion; there is no OCR. Metadata preserves corpus-relative `source`, title, 1-based PDF file page, `source_kind`, document/chunk IDs, and page-relative start offset. Example citation ID: `raft.pdf:p7:c1`. IDs identify positions, not historical content versions.
 
-| Setting | Default |
-| --- | --- |
-| `CORPUS_DIR` | `./data/corpus` |
-| `CHROMA_PERSIST_DIR` | `./data/chroma_index` |
-| `CHROMA_COLLECTION` | `technical_documents` |
-| `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` |
-| `RETRIEVAL_TOP_K` | `10` (provisional) |
+Local `sentence-transformers/all-MiniLM-L6-v2` embeddings run on CPU with normalized vectors and a cached model instance. Initial use may download weights. `ingest_documents()` manually re-embeds all chunks in batches of 64, prepares vectors before writes, upserts current IDs, then removes stale IDs. Failed writes can leave a partial rebuild; run ingestion while requests are stopped. A changed embedding-model name requires a new collection name. Retrieval rejects missing/empty indexes rather than ingesting during requests.
 
-Relative configured directories resolve against the project root.
+Defaults: `CORPUS_DIR=./data/corpus`, `CHROMA_PERSIST_DIR=./data/chroma_index`, `CHROMA_COLLECTION=technical_documents`, `RETRIEVAL_TOP_K=10`. Relative paths resolve against the project root. Retrieval uses a LangChain Chroma retriever, keeps ranked matches first, and adds at most one continuation per match: the next same-page chunk, otherwise the first chunk of the immediately following PDF page in the same paper. Results are deduplicated, preserve metadata, and contain at most 20 chunks at the default k. There is no relevance cutoff or reranking. The continuation strategy and measured trade-offs are documented in the evaluation report.
 
-1. `load_chunks()` recursively reads `.pdf` files, case-insensitively, using `pypdf`. Other extensions and symlinks are ignored. The filename stem supplies the title. Empty-password encryption is supported; files requiring a password, corrupt PDFs, and papers with no extractable text fail ingestion. Blank pages are skipped without renumbering later pages. There is no OCR fallback.
-2. Each page is split independently with `RecursiveCharacterTextSplitter`: 800-character chunks, 120-character configured overlap, and start offsets within the page. Chunks never cross pages. These are initial settings, not evaluated optima or token limits. PDF column order, tables, and figures can limit extracted evidence.
-3. Metadata preserves `source` (corpus-relative path), `title`, `page` (1-based PDF file page), `source_kind`, `document_id`, `chunk_id`, and `start_index`. For `raft.pdf`, a document ID is `document:raft.pdf` and a chunk ID is `raft.pdf:p7:c1`. IDs use path and position, not content hashes; changing the text can retain the same ID, so IDs are not historical versions. PDF file pages may differ from printed paper page numbers.
-4. `get_embeddings()` lazily loads the configured Hugging Face model on CPU and caches one model instance. Vectors are normalized. The initial model use may download weights; local embedding uses no paid embedding API. PyTorch and Transformers increase dependency size and cold-start work.
-5. `ingest_documents()` re-embeds every chunk on each manual run, preparing all vectors in batches of 64 before writing evidence. It then upserts chunks and removes obsolete IDs in batches of 64. The configured collection is dedicated to this corpus. Extraction or embedding failures preserve existing evidence; failed writes propagate and can leave a partial rebuild. No change detection is needed.
-6. `get_vector_store()` checks the collection's embedding-model name against configuration. A changed model name requires a new collection name. Retrieval never creates a missing collection or automatically ingests documents.
-7. `retrieve_documents()` uses a LangChain Chroma retriever for top-k vector similarity and returns `Document` objects with their metadata. There is no relevance cutoff or reranking; similarity alone does not prove a chunk answers the question.
+Research source modes are `documents` (default), `web`, and `both`. The supervisor selects the mode and explains it; Research enforces it. In `both`, document retrieval precedes web retrieval. A channel exception fails the worker without automatic fallback, preserving previously collected sources. An empty channel can be combined with evidence from the other channel; no evidence skips generation.
 
-An offline comparison on the 12 fixed questions increased coverage of all reference file/page pairs per question from 10/12 questions at k=5 to 11/12 at k=10. Total reference file/page pairs found increased from 10/13 to 12/13, while average retrieved text grew from approximately 3,778 to 7,548 characters. The missing Raft election passage ranked eighth. The cross-paper comparison still lacked required passages, and page matches did not guarantee that every required fact was present. The default is provisionally 10; answer-quality evaluation is still needed to justify the extra context and generation cost. Changing k does not require re-ingestion.
+The Research LCEL chain is `RunnableLambda(retrieve_evidence) | prompt | RunnableLambda(generate_findings) | StrOutputParser()`. Retrieval returns `research_context`: JSON containing the original query, delegated instruction, mode, and normalized sources. The human template is `{research_context}`. The system prompt treats sources as untrusted data, restricts factual claims to supplied evidence, requests exact citation IDs/URLs and available titles/PDF pages, and requires acknowledgment of missing support. Model construction occurs only after evidence exists.
 
-Run ingestion explicitly after preparing the corpus:
+Sources preserve text and metadata in `AgentResult.sources`. Research and Summary append source inventories; Summary also preserves sources from successful findings. Source preservation and citation presence do not establish entailment. The successful offline graph test verifies retained evidence and a citation through Research, Code, Summary, and final state using mocked model responses. A supervisor unit test also verifies that a supplied final answer/citation is returned unchanged. These checks do not prove that live models preserve citations; document identifiers are not yet document-serving URLs.
 
-```powershell
-.\.venv\Scripts\python.exe -m app.services.document_rag
-```
+Research retrieval and generation each have `RESEARCH_TIMEOUT_SECONDS` (default 60). Code and Summary each use that setting for their worker operation. Chroma calls use `asyncio.to_thread`; cancellation cannot forcibly stop underlying thread computation. The provider factory sets a 30-second timeout and two retries. These are not a whole-workflow deadline.
 
-The command prints counts for `documents`, `chunks`, `embedded_chunks`, and `removed_chunks`. Ingestion is a manual rebuild, not an atomic index swap. Run it while requests are stopped. Failed multi-batch writes can leave some new chunks alongside old chunks until a successful rerun. The production PDF index has not yet been built. Preparing a deployment index and packaging model assets remain deployment work; request handlers should not rebuild the corpus.
+## Tavily Remote MCP sharing
 
-## LCEL augmentation and generation
+`search_web()` uses a request-scoped Streamable HTTP transport and `ClientSession`: initialize, list tools, select a supported Tavily search tool, invoke it, normalize results, and close resources. Authentication uses `https://mcp.tavily.com/mcp/?tavilyApiKey=<encoded-key>` with credentials outside source control. Tavily timeout defaults to 30 seconds. Discovery handles one tool page and checks expected argument names/types, not arbitrary schemas or discovery pagination.
 
-The Research chain is:
+Evidence retains HTTP(S) URLs, snippets, titles, and optional metadata; exact URLs are deduplicated. Result count defaults to five, titles are capped at 500 characters and snippets at 6,000. Selected transport log filters suppress Tavily endpoint/key-marker records; this is not universal credential redaction.
 
-```python
-RunnableLambda(retrieve_evidence) | prompt | RunnableLambda(generate_findings) | StrOutputParser()
-```
+Research invokes this service for web grounding; Code exposes it as `search_technical_web` for model-requested programming references. This provides the same Remote MCP search capability in two distinct contexts without duplicating transport code. Shared access and mocked invocation do not prove deployed sharing: both agents must actually invoke the same MCP tool in suitable live/deployed examples. Summary has no MCP access. Code's web restrictions are prompt instructions, not a deterministic permission gate.
 
-`chain.ainvoke()` supplies the original query, research instruction, and retrieval mode. `retrieve_evidence()` calls the selected services and returns a dictionary whose `research_context` value is JSON containing that request and the normalized sources. The human prompt template `{research_context}` is filled from that dictionary key. The system prompt instructs the model to treat source text as untrusted evidence, cite supplied sources, distinguish interpretation and uncertainty, and acknowledge missing support.
+## Application and deployment boundary
 
-`generate_findings()` invokes the shared research-model factory only after evidence exists. `StrOutputParser` extracts text from the model response, including supported text-block responses. Blank output becomes failure. A source appendix is added after generation.
+`Settings` reads root `.env` plus environment overrides. `validate_runtime()` exists but startup does not call it. FastAPI currently serves static assets and `/health`; it does not invoke the graph, stream tokens, or expose live routing/citations. The intended application is single-turn and claims no durable conversation memory. Chroma index persistence is separate from conversation state. Cloud Run packaging, Linux dependencies, model/index assets, cold starts, and deployment remain unverified.
 
-### Evidence and citation contract
+## Verification and shared environment
 
-All evidence entries contain `source_id`, `source_kind`, `title`, `content`, and `metadata`.
+Application execution, offline tests, answer collection, and RAGAS scoring share Python 3.13 `.venv` and `requirements.txt`. Consolidated pins include OpenAI SDK 2.54.0, jiter 0.14.0, pydantic-settings 2.16.1, python-dotenv 1.2.4, and LangChain Community 0.3.31 (retaining a module RAGAS 0.4.3 imports). The consolidation previously passed clean-environment offline checks, RAGAS imports, graph compilation, and provider/tool construction. Historical evaluation scores were not regenerated under those pins; live consolidated-SDK compatibility remains unverified.
 
-- Document entries use the original chunk ID as `source_id`, include the relative PDF path as `source`, and retain page, document/chunk IDs, and offsets in metadata. The prompt requests the supplied title and PDF page alongside inline `[source_id]` citations, for example `(raft, PDF page 7) [raft.pdf:p7:c1]`. It forbids inventing missing page numbers.
-- Web entries retain the Tavily URL as `url` and receive `source_kind="web"`. The prompt requests exact inline URLs. Web IDs such as `web-1` are local to each search, not globally unique across tasks.
-- The structured `AgentResult.sources` preserves snippets. Python builds the text appendix from retrieved metadata, listing IDs, titles, paths, and available PDF pages, or web URLs. Missing page metadata adds no page reference. It does not duplicate snippets within the textual report; the supervisor currently serializes full results, including structured evidence, into its context.
+The latest executed offline suite passed **110 tests in 20.06 seconds** on 2026-10-27. Coverage includes health/static serving, PDF ingestion and real temporary Chroma with fake embeddings, Research LCEL/modes/failures/citations, continuation retrieval, Code inspection/tool-loop failures, Summary grounding/citations/failures, answer collection, and the supervisor/graph checks below. Mocks avoid paid requests. Current direct MCP transport/schema tests remain missing. Offline graph execution does not demonstrate live providers, deployed MCP sharing, or application streaming.
 
-Source preservation does not validate claim entailment or ensure every generated reference is correct. Document paths are identifiers, not yet clickable document-serving endpoints. Final citation preservation through the pending Summary worker, supervisor output, and frontend still needs verification.
-
-### Async behavior and failures
-
-Research is async and must run through graph `ainvoke`/`astream`. Synchronous Chroma retrieval runs via `asyncio.to_thread()` so it does not directly block the event loop. Cancellation or timeout stops awaiting that thread but cannot forcibly stop its underlying computation.
-
-The combined retrieval stage has `RESEARCH_TIMEOUT_SECONDS` (default 60 seconds); synthesis has a separate timeout of the same duration. Tavily also has its own `TAVILY_TIMEOUT_SECONDS` (default 30 seconds). These are stage limits, not a whole-workflow deadline. The provider factory currently retains `max_retries=2` and a 30-second provider timeout.
-
-Invalid tasks, invalid modes, retrieval failures, missing evidence, blank generation, and model errors return `success=False` with safe error text. Collected sources survive subsequent failures. Cancellation propagates to the caller. Tests cover these worker behaviors; full supervisor recovery and production graph failure isolation remain unverified.
-
-## Tavily Remote MCP
-
-`search_web()` opens a request-scoped Streamable HTTP transport, initializes `ClientSession`, lists tools, invokes search, normalizes results, and closes the session/transport. Authentication uses the assignment endpoint pattern `https://mcp.tavily.com/mcp/?tavilyApiKey=<encoded-key>`; credentials remain in the environment or ignored `.env`.
-
-The current implementation lists one page of tools, selects the first `tavily_search` or `tavily-search` with a string `query` property, adds supported `search_depth`/`max_results` arguments, and checks required argument names. It does not implement discovery pagination, arbitrary capability selection, or full JSON-schema validation.
-
-Structured content or JSON-text results are normalized to usable HTTP(S) URLs with snippets. Exact URLs are deduplicated; result count is capped by configuration, titles at 500 characters, and snippets at 6,000 characters. Optional score, publication date, and author metadata are retained. Malformed results fail safely.
-
-Filters on `httpx2` and `mcp.client.streamable_http` suppress records containing the Tavily endpoint or query-key marker, including exception text. This is not universal credential redaction for arbitrary logs or tracing. There are no application-level search retries or pooled sessions. Only Research currently invokes Tavily; sharing the service function does not satisfy the rubric's requirement that multiple agents actually invoke the same MCP tool.
-
-## LLM routing and application boundary
-
-| Role | Configured provider/model defaults | Current status |
+| Added test file | Cases | Verified behavior |
 | --- | --- | --- |
-| Supervisor | OpenAI / `gpt-5.1` | Decision node implemented. |
-| Research | Google / `gemini-3.5-flash-lite` | Worker implemented. |
-| Code | OpenAI / `gpt-5.1` | Configuration only; worker missing. |
-| Summary | Google / `gemini-3.5-flash-lite` | Configuration only; worker missing. |
+| `tests/test_supervisor.py` | 10 | Context defaults, failed-worker evidence reaching the model, Research modes and other worker delegation, provider rationale and decision reason, finish/citation preservation, and iteration-limit branches without generation. |
+| `tests/test_agent_graph.py` | 4 | Real compiled graph and nodes with mocked external boundaries: all three workers execute with accumulated evidence/citations/traces; a model failure in each worker returns to the supervisor and finishes with an honest failure response. |
 
-These are static role assignments, not completed cost/capability routing. Research traces explicitly mark dynamic model routing as pending. Source selection and generation-provider routing are separate decisions. Model IDs are configured values; this work did not verify availability through live API calls.
-
-The intended cost/capability policy uses Gemini 3.5 Flash-Lite for routine evidence extraction and short summaries, and GPT-5.1 for demanding code tasks and complex synthesis across sources. Flash-Lite is selected as a cost-efficient option; its parameter count and task quality are not assumed. Task-dependent routing and measured quality/latency comparisons remain pending. The earlier live pilot received a model-unavailable 404 for `gemini-2.5-flash`; the Flash-Lite replacement is configured but has not yet been tested live. Its project-specific quota must be respected during testing and deployment.
-
-`Settings` reads the root `.env` and environment overrides. `validate_runtime()` exists but is not called by startup. FastAPI does not yet invoke the graph, stream tokens, or expose document citations. The design intends single-turn requests; durable conversation memory is not currently claimed. A Chroma index is separate from conversation persistence, and its Cloud Run packaging remains unverified.
-
-## Verification
-
-Current persistent offline suite: **46 passed** on 2026-10-26:
-
-| File | Cases | What is exercised |
-| --- | --- | --- |
-| `tests/test_health.py` | 4 | Health endpoint, homepage, static CSS, and missing route. |
-| `tests/test_document_rag.py` | 17 | Mocked PDF extraction and real temporary Chroma with deterministic fake embeddings: page metadata, blank pages, repeat ingestion, edits/deletions, encryption, corrupt/empty input, embedding failures, model mismatch, and batching. |
-| `tests/test_research.py` | 25 | Real LCEL with mocked retrieval/model calls: modes, augmentation, PDF page/chunk references, missing pages, combined web citations, validation, empty evidence, failures, text formats, timeout, cancellation, and a small real LangGraph's additive reducers. |
-
-Additional one-off development checks exercised supervisor mode mapping with mocked structured decisions and a real temporary Chroma-to-Research-to-LangGraph path with fake embeddings and generation. Those checks are not persistent tests. The current suite does not contain the older `test_research_mcp.py` referenced in prior notes; historical 42-test/MCP coverage claims are not evidence for this checkout.
-
-Run offline checks from the repository root:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
-.\.venv\Scripts\python.exe -m pytest tests/test_document_rag.py tests/test_research.py -q -p no:cacheprovider
-.\.venv\Scripts\python.exe -m pip check
-```
-
-Pytest excludes the `live` marker by default. No live test is currently shipped. Paid/quota-limited tests require separate explicit approval; implementing a feature does not authorize API spending. This development used no paid APIs or model-weight downloads. Real embeddings/retrieval quality, Tavily authentication and remote schema compatibility, generation-model behavior, supervisor source-choice quality, full production execution, and Cloud Run behavior remain unverified.
-
-## Remaining work
-
-- **P0 - Corpus and evaluation:** Document sources and reproduction instructions for the selected papers, build their index with real embeddings, and evaluate chunking/retrieval. Define fixed paper-specific questions and reference answers grounded in actual passages, retain retrieved chunks and generated answers, and report RAGAS faithfulness, answer relevance, context precision, and context recall with concrete results in `docs/evaluation.md`. Mocked unit tests do not substitute for this evaluation; paid evaluator/generation calls require approval.
-- **P0 - Specialists and orchestration:** Implement distinct Code and Summary workers with appropriate tools/prompts; exercise the full async graph and preserve citations through the final answer.
-- **P0 - Provider routing and MCP sharing:** Implement inspectable cost/capability routing across providers, and have a second agent invoke the same MCP tool in a useful distinct context.
-- **P0 - Delivery:** Connect chat/SSE and citation/trace UI, prepare a Linux-compatible container and Chroma/model assets, deploy to Cloud Run, and complete README, evaluation, and process-log deliverables.
-- **P1 - Persistent integration coverage:** Add supervisor source-selection and full-graph recovery tests as those components become operational. Restore focused MCP transport/schema/response tests for the current service and separately budget any live compatibility check.
-- **P1 - Grounding and reliability:** Validate source references, bound workflow/context costs, measure cold/warm latency, and review provider retries. Citation-reference checks alone cannot establish factual entailment.
-
-## Shared dependency environment
-
-As of 2026-10-27, application execution, offline tests, answer collection, and RAGAS scoring use the same Python 3.13 `.venv`, installed from `requirements.txt`. There is no separate evaluation requirements file. The combined set was validated in a clean temporary environment with 96 passing offline tests, RAGAS imports, graph compilation, and offline provider/tool construction. OpenAI SDK 2.54.0 and jiter 0.14.0 resolve the Instructor/RAGAS conflict; pydantic-settings 2.16.1 and python-dotenv 1.2.4 satisfy the combined dependencies. LangChain Community 0.3.31 retains a module RAGAS imports. Model IDs are independent of SDK versions. Linux/Cloud Run installation and live compatibility of the consolidated SDK set remain unverified; existing RAGAS measurements are preserved in [evaluation.md](evaluation.md).
+The graph test's mocked supervisor reads actual accumulated results before returning its next decision. This verifies state propagation and dispatch, not whether a live LLM chooses the right agent. The success path checks that source text/page metadata survive all workers and that both configured provider labels appear in call traces; mocked labels are not evidence of real provider requests. The failure paths also check that private provider exception text is not exposed in graph output. `git diff --check` passed after the test additions.
 
 ```powershell
 py -3.13 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider
+.\.venv\Scripts\python.exe -m app.services.document_rag
 ```
+
+Ingestion is an explicit operation after supplying the corpus, not part of pytest. Pytest excludes `live` by default. Paid/quota-limited tests require separate explicit approval. This documentation review made no paid API calls. Recorded live Research/RAGAS results do not verify Tavily, OpenAI supervisor/code generation, streaming, or Cloud Run.
+
+## Remaining work
+
+- **P0 - Routing evidence:** Expose the implemented per-call provider/model/rationale traces in the application and demonstrate both providers in normal use. Keep fixed assignments; dynamic per-call routing is optional.
+- **P0 - Orchestration verification:** Verify live supervisor delegation, worker-failure handling, and final citation preservation when chat integration is ready. Offline supervisor and full-graph success/failure tests are implemented; live tests require separate approval.
+- **P0 - MCP evidence:** Verify current transport behavior and demonstrate Research and Code invoking the same Tavily MCP tool in distinct contexts; live calls require approval.
+- **P0 - Delivery:** Implement chat/SSE and citation/trace UI; package Linux-compatible dependencies, model/index assets, and deploy on Cloud Run. Complete README and process-log deliverables.
+- **P0 - Evaluation and reproducibility:** Document corpus acquisition/attribution, retain reproducible artifacts, and finish provider comparison, token/cost estimates, retrieval/LLM/total latency, TTFT, and cold/warm deployment measurements. Existing Research RAGAS results are already recorded.
+- **P1 - Reliability:** Review supervisor API failure handling, deterministic tool restrictions, context/workflow cost bounds, retries, and citation entailment limitations as integration proceeds.

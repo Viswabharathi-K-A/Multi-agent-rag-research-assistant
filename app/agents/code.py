@@ -100,7 +100,7 @@ async def code_node(state: ResearchState) -> dict:
             tool_calls = 0
             for turn in range(10):
                 event("llm_started", "Analyze or generate code",
-                      "Configured code provider/model; task-dependent provider routing pending")
+                      "Code uses its configured provider for capability-based code reasoning and tool-assisted analysis")
                 response = await llm.ainvoke(messages)
                 messages.append(response)
                 if not response.tool_calls:

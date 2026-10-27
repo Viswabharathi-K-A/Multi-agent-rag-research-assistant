@@ -76,7 +76,7 @@ async def summary_node(state: ResearchState) -> dict:
                 "completed_results": completed, "sources": sources,
             }, ensure_ascii=False))]
             event("llm_started", "Condense supplied findings and evidence",
-                  "Configured summary provider/model; task-dependent provider routing pending")
+                  "Summary uses its configured provider for cost-conscious condensation of supplied findings and evidence")
             response = await get_agent_llm("summary").ainvoke(messages)
             content = StrOutputParser().invoke(response).strip()
             if not content:

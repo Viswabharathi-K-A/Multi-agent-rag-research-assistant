@@ -140,7 +140,11 @@ def supervisor_node(state: ResearchState) -> dict:
         ),
         "provider": provider,
         "model": model,
-        "reason": decision.reason,
+        "reason": (
+            "Supervisor uses its configured provider for capability-based "
+            "delegation, evidence review, and final synthesis. "
+            f"Decision: {decision.reason}"
+        ),
     }
 
     update = {
