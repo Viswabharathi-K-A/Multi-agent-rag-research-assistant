@@ -231,6 +231,30 @@ async def test_blank_model_output_is_failure(research_case):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("response", [
+    "Finding without inline citations",
+    "Supported [raft.pdf:p7:c1]. Invented [raft.pdf:p99:c1]",
+    "Supported [raft.pdf:p7:c1]. Range [raft.pdf:p7:c1-c2]",
+    "Supported [raft.pdf:p7:c1]. Combined [raft.pdf:p7:c1, raft.pdf:p7:c2]",
+], ids=["missing", "fabricated", "range", "combined"])
+async def test_invalid_document_citations_fail_before_source_appendix(research_case, response):
+    research_case["model"].ainvoke.side_effect = None
+    research_case["model"].ainvoke.return_value = AIMessage(content=response)
+
+    output = await research.research_node(research_case["state"])
+    result = output["results"][0]
+
+    assert not result["success"]
+    assert result["content"] == ""
+    assert "citation" in result["error"].lower()
+    assert result["sources"][0]["source_id"] == "raft.pdf:p7:c1"
+    assert result["sources"][0]["content"] == research_case["chunk"].page_content
+    assert output["trace"][-1]["action"] == "research_failed"
+    assert not any(event["action"] == "research_completed" for event in output["trace"])
+    research_case["model"].ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_model_timeout_cancels_generation_and_preserves_evidence(research_case):
     cancelled = asyncio.Event()
 

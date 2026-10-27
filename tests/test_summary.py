@@ -89,6 +89,30 @@ async def test_missing_citations_or_blank_response_fails_and_keeps_evidence(case
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reference", [
+    "raft.pdf:p99:c1",
+    "raft.pdf:p6:c1-c2",
+    "raft.pdf:p6:c1, raft.pdf:p6:c2",
+], ids=["fabricated", "range", "combined"])
+async def test_invalid_document_citation_fails_even_with_valid_reference(case, reference):
+    case["llm"].ainvoke.return_value = AIMessage(
+        content=f"Supported [raft.pdf:p6:c1]. Invalid [{reference}]"
+    )
+
+    output = await summary.summary_node(case["state"])
+    result = output["results"][0]
+
+    assert not result["success"]
+    assert result["content"] == ""
+    assert "exact supplied IDs" in result["error"]
+    assert result["sources"][0]["source_id"] == "raft.pdf:p6:c1"
+    assert result["sources"][0]["content"] == case["chunk"].page_content
+    assert output["trace"][-1]["action"] == "summary_failed"
+    assert not any(event["action"] == "summary_completed" for event in output["trace"])
+    case["llm"].ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("task", [None, {"agent": "code", "instruction": "Code"},
                                       {"agent": "summary", "instruction": " "}])
 async def test_invalid_task_skips_retrieval_and_model(case, task):

@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 
+from app.agents.citations import validate_document_citations
 from app.agents.state import ResearchState, RetrievalMode
 from app.config import get_settings
 
@@ -99,16 +100,6 @@ def build_supervisor_context(state: ResearchState) -> str:
 async def supervisor_node(state: ResearchState) -> dict:
     """Choose the next agent using an LLM."""
 
-    settings = get_settings()
-
-    # Use the shared provider factory.
-    from app.llm import get_agent_llm
-
-    llm = get_agent_llm("supervisor")
-    structured_llm = llm.with_structured_output(
-        SupervisorDecision
-    )
-
     iteration = state.get("iteration", 0)
     max_iterations = state.get("max_iterations", 8)
 
@@ -128,6 +119,16 @@ async def supervisor_node(state: ResearchState) -> dict:
                 "reason": "Execution safety limit",
             }],
         }
+
+    settings = get_settings()
+
+    # Use the shared provider factory only when another decision is needed.
+    from app.llm import get_agent_llm
+
+    llm = get_agent_llm("supervisor")
+    structured_llm = llm.with_structured_output(
+        SupervisorDecision
+    )
 
     decision = await structured_llm.ainvoke([
         SystemMessage(content=SUPERVISOR_PROMPT),
@@ -167,6 +168,25 @@ async def supervisor_node(state: ResearchState) -> dict:
     if decision.next_agent == "finish":
         update["current_task"] = None
         update["final_answer"] = decision.final_answer
+        sources = []
+        for result in state.get("results", []):
+            if result.get("success"):
+                sources.extend(result.get("sources", []))
+        try:
+            validate_document_citations(decision.final_answer, sources)
+        except ValueError as exc:
+            update["final_answer"] = (
+                "I could not produce a final answer with valid document citations. "
+                "Please review the retrieved sources."
+            )
+            update["trace"].append({
+                "node": "supervisor",
+                "action": "citation_validation_failed",
+                "detail": str(exc),
+                "provider": None,
+                "model": None,
+                "reason": "Document references must match evidence from successful workers",
+            })
     else:
         update["current_task"] = {
             "agent": decision.next_agent,

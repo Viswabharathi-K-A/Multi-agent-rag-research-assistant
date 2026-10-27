@@ -7,6 +7,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 
+from app.agents.citations import validate_document_citations
 from app.agents.state import AgentResult, ResearchState, TraceEvent
 from app.config import get_settings
 from app.llm import get_agent_llm, get_agent_provider_info
@@ -22,6 +23,8 @@ For PDF evidence, include the supplied title and metadata.page with the inline
 citation, for example: (raft, PDF page 7) [raft.pdf:p7:c1]. Use only supplied
 titles, page numbers, and source IDs. PDF pages are 1-based file pages, not the
 paper's printed page numbers. Never infer a page number when it is missing.
+Put each exact document source ID in separate brackets; never combine IDs or
+shorten them into ranges.
 Separate supported findings, interpretations, and uncertainties. Explain missing
 or conflicting evidence, including when a requested source kind has no evidence.
 Do not invent sources or imply snippets verify full pages. If the evidence does
@@ -115,6 +118,10 @@ async def research_node(state: ResearchState) -> dict:
         })).strip()
         if not content:
             raise RetrievalError("Research model returned no text")
+        try:
+            validate_document_citations(content, sources)
+        except ValueError as exc:
+            raise RetrievalError(str(exc)) from None
 
         references = []
         for source in sources:
@@ -128,7 +135,7 @@ async def research_node(state: ResearchState) -> dict:
             references.append(f"[{source['source_id']}] {source['title']} - {location}")
         content += "\n\nRetrieved sources (not independent claim verification):\n" + "\n".join(references)
         event("research_completed", "Synthesized findings and preserved source evidence",
-              "Evidence-grounded synthesis; claim-level citation validation remains a limitation")
+              "Document citation IDs checked; claim-level entailment is not automatically verified")
     except Exception as exc:
         error = str(exc) if isinstance(exc, RetrievalError) else (
             "Research operation timed out" if isinstance(exc, TimeoutError) else "Research operation failed"

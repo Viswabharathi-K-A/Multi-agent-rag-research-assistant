@@ -134,9 +134,82 @@ async def test_finish_preserves_separate_citations_and_source_context(case, docu
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("answer", [
+    "Claim [raft.pdf:p5:c4-c5]",
+    "Claim [raft.pdf:p5:c4–c5]",
+    "Claim [raft.pdf:p5:c4, raft.pdf:p5:c5]",
+    "Claim [raft.pdf:p5:c4] and invented [raft.pdf:p99:c99]",
+    "Claim without citations",
+    "Web only https://example.com/ref",
+    "",
+])
+async def test_finish_rejects_invalid_document_citations_without_retry(case, answer):
+    sources = [{"source_kind": "document", "source_id": source_id,
+                "source": "raft.pdf", "content": "Evidence", "metadata": {"page": 5}}
+               for source_id in ("raft.pdf:p5:c4", "raft.pdf:p5:c5")]
+    result = {"agent": "research", "success": True, "content": "Finding [raft.pdf:p5:c4]",
+              "sources": sources}
+    case["state"]["results"] = [result]
+    case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
+        next_agent="finish", instruction="", reason="Task complete", final_answer=answer)
+
+    output = await supervisor.supervisor_node(case["state"])
+
+    assert output["next_agent"] == "finish" and output["current_task"] is None
+    assert output["iteration"] == 3
+    assert output["final_answer"] == (
+        "I could not produce a final answer with valid document citations. "
+        "Please review the retrieved sources."
+    )
+    assert "results" not in output and case["state"]["results"] == [result]
+    assert [trace["action"] for trace in output["trace"]] == ["finish", "citation_validation_failed"]
+    failure = output["trace"][-1]
+    assert failure["provider"] is None and failure["model"] is None
+    case["structured"].ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result,answer", [
+    ({"success": True, "content": "Code explanation", "sources": []}, "Self-contained code explanation"),
+    ({"success": True, "content": "Web finding", "sources": [
+        {"source_kind": "web", "source_id": "web-1", "url": "https://example.com/ref"}]},
+     "Web finding https://example.com/ref"),
+    ({"success": False, "content": "", "sources": [
+        {"source_kind": "document", "source_id": "raft.pdf:p5:c4"}]},
+     "The requested task could not be completed."),
+])
+async def test_finish_without_successful_document_evidence_preserves_answer(case, result, answer):
+    case["state"]["results"] = [result]
+    case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
+        next_agent="finish", instruction="", reason="Task complete", final_answer=answer)
+
+    output = await supervisor.supervisor_node(case["state"])
+
+    assert output["final_answer"] == answer
+    assert [trace["action"] for trace in output["trace"]] == ["finish"]
+
+
+@pytest.mark.asyncio
+async def test_finish_does_not_accept_ids_only_retained_by_failed_workers(case):
+    case["state"]["results"] = [{"success": False, "sources": [
+        {"source_kind": "document", "source_id": "raft.pdf:p5:c4"}]}]
+    case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
+        next_agent="finish", instruction="", reason="Task complete",
+        final_answer="Claim [raft.pdf:p5:c4]")
+
+    output = await supervisor.supervisor_node(case["state"])
+
+    assert "valid document citations" in output["final_answer"]
+    assert output["trace"][-1]["action"] == "citation_validation_failed"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("iteration", [8, 9])
-async def test_iteration_limit_stops_without_generation(case, iteration):
+async def test_iteration_limit_stops_without_settings_or_model(case, monkeypatch, iteration):
     case["state"]["iteration"] = iteration
+    settings = Mock(side_effect=ValueError("Settings must not be loaded at the limit"))
+    monkeypatch.setattr(supervisor, "get_settings", settings)
+    case["factory"].side_effect = ValueError("Model must not be constructed at the limit")
 
     output = await supervisor.supervisor_node(case["state"])
 
@@ -146,4 +219,7 @@ async def test_iteration_limit_stops_without_generation(case, iteration):
     trace = output["trace"][0]
     assert trace["action"] == "limit_reached"
     assert trace["provider"] is None and trace["model"] is None
+    settings.assert_not_called()
+    case["factory"].assert_not_called()
+    case["model"].with_structured_output.assert_not_called()
     case["structured"].ainvoke.assert_not_called()
