@@ -82,7 +82,7 @@ The strategy is deliberately static: manually place PDFs in the corpus directory
 | `CHROMA_PERSIST_DIR` | `./data/chroma_index` |
 | `CHROMA_COLLECTION` | `technical_documents` |
 | `EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` |
-| `RETRIEVAL_TOP_K` | `5` |
+| `RETRIEVAL_TOP_K` | `10` (provisional) |
 
 Relative configured directories resolve against the project root.
 
@@ -93,6 +93,8 @@ Relative configured directories resolve against the project root.
 5. `ingest_documents()` re-embeds every chunk on each manual run, preparing all vectors in batches of 64 before writing evidence. It then upserts chunks and removes obsolete IDs in batches of 64. The configured collection is dedicated to this corpus. Extraction or embedding failures preserve existing evidence; failed writes propagate and can leave a partial rebuild. No change detection is needed.
 6. `get_vector_store()` checks the collection's embedding-model name against configuration. A changed model name requires a new collection name. Retrieval never creates a missing collection or automatically ingests documents.
 7. `retrieve_documents()` uses a LangChain Chroma retriever for top-k vector similarity and returns `Document` objects with their metadata. There is no relevance cutoff or reranking; similarity alone does not prove a chunk answers the question.
+
+An offline comparison on the 12 fixed questions increased coverage of all reference file/page pairs per question from 10/12 questions at k=5 to 11/12 at k=10. Total reference file/page pairs found increased from 10/13 to 12/13, while average retrieved text grew from approximately 3,778 to 7,548 characters. The missing Raft election passage ranked eighth. The cross-paper comparison still lacked required passages, and page matches did not guarantee that every required fact was present. The default is provisionally 10; answer-quality evaluation is still needed to justify the extra context and generation cost. Changing k does not require re-ingestion.
 
 Run ingestion explicitly after preparing the corpus:
 
@@ -147,11 +149,13 @@ Filters on `httpx2` and `mcp.client.streamable_http` suppress records containing
 | Role | Configured provider/model defaults | Current status |
 | --- | --- | --- |
 | Supervisor | OpenAI / `gpt-5.1` | Decision node implemented. |
-| Research | Google / `gemini-2.5-flash` | Worker implemented. |
+| Research | Google / `gemini-3.5-flash-lite` | Worker implemented. |
 | Code | OpenAI / `gpt-5.1` | Configuration only; worker missing. |
-| Summary | Google / `gemini-2.5-flash` | Configuration only; worker missing. |
+| Summary | Google / `gemini-3.5-flash-lite` | Configuration only; worker missing. |
 
 These are static role assignments, not completed cost/capability routing. Research traces explicitly mark dynamic model routing as pending. Source selection and generation-provider routing are separate decisions. Model IDs are configured values; this work did not verify availability through live API calls.
+
+The intended cost/capability policy uses Gemini 3.5 Flash-Lite for routine evidence extraction and short summaries, and GPT-5.1 for demanding code tasks and complex synthesis across sources. Flash-Lite is selected as a cost-efficient option; its parameter count and task quality are not assumed. Task-dependent routing and measured quality/latency comparisons remain pending. The earlier live pilot received a model-unavailable 404 for `gemini-2.5-flash`; the Flash-Lite replacement is configured but has not yet been tested live. Its project-specific quota must be respected during testing and deployment.
 
 `Settings` reads the root `.env` and environment overrides. `validate_runtime()` exists but is not called by startup. FastAPI does not yet invoke the graph, stream tokens, or expose document citations. The design intends single-turn requests; durable conversation memory is not currently claimed. A Chroma index is separate from conversation persistence, and its Cloud Run packaging remains unverified.
 

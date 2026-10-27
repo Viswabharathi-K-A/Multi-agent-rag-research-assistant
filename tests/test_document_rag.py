@@ -209,3 +209,68 @@ def test_empty_password_encryption_is_readable(corpus):
     assert len(chunks) == 2
     assert all(chunk.metadata["page"] == 1 for chunk in chunks)
     reader.return_value.decrypt.assert_called_with("")
+
+
+@pytest.mark.parametrize("case", ["same_page", "next_page", "blank_page", "end_of_paper"])
+def test_continuation_preserves_page_boundaries_and_citations(corpus, monkeypatch, case):
+    settings, embeddings, pages, _ = corpus
+    if case == "same_page":
+        pages["raft.pdf"] = ["consensus evidence. " * 150, "Later page evidence"]
+    elif case == "next_page":
+        pages["raft.pdf"] = ["First page evidence", "Second page continuation"]
+    elif case == "blank_page":
+        pages["raft.pdf"] = ["First page evidence", " ", "Do not skip to page three"]
+    else:
+        pages["raft.pdf"] = ["Final page evidence"]
+    document_rag.ingest_documents(settings, embeddings)
+    store = document_rag.get_vector_store(settings, embeddings)
+    chunks = document_rag.load_chunks(settings.documents_path)
+    seed = next(chunk for chunk in chunks if chunk.metadata["chunk_id"] == "raft.pdf:p1:c1")
+    retriever = Mock()
+    retriever.invoke.return_value = [seed]
+    monkeypatch.setattr(store, "as_retriever", Mock(return_value=retriever))
+    monkeypatch.setattr(document_rag, "get_vector_store", lambda *args: store)
+    result = document_rag.retrieve_documents("consensus", settings, embeddings)
+    assert result[0] == seed
+    store.as_retriever.assert_called_once_with(search_kwargs={"k": 1})
+    if case in ("same_page", "next_page"):
+        expected_id = "raft.pdf:p1:c2" if case == "same_page" else "raft.pdf:p2:c1"
+        expected = next(chunk for chunk in chunks if chunk.metadata["chunk_id"] == expected_id)
+        assert len(result) == 2
+        assert result[1].page_content == expected.page_content
+        assert result[1].metadata == expected.metadata
+    else:
+        assert result == [seed]
+    assert all(chunk.metadata["source"] == "raft.pdf" for chunk in result)
+
+
+def test_existing_continuation_is_not_duplicated(corpus, monkeypatch):
+    settings, embeddings, pages, _ = corpus
+    pages["raft.pdf"] = ["First page", "Next page"]
+    document_rag.ingest_documents(settings, embeddings)
+    store = document_rag.get_vector_store(settings, embeddings)
+    seeds = [chunk for chunk in document_rag.load_chunks(settings.documents_path)
+             if chunk.metadata["source"] == "raft.pdf"]
+    monkeypatch.setattr(store, "as_retriever", Mock(return_value=Mock(invoke=Mock(return_value=seeds))))
+    monkeypatch.setattr(document_rag, "get_vector_store", lambda *args: store)
+    result = document_rag.retrieve_documents("consensus", settings.model_copy(update={"retrieval_top_k": 2}), embeddings)
+    assert [chunk.metadata["chunk_id"] for chunk in result] == ["raft.pdf:p1:c1", "raft.pdf:p2:c1"]
+
+
+def test_ranked_matches_stay_first_and_expansion_is_not_recursive(corpus, monkeypatch):
+    settings, embeddings, pages, _ = corpus
+    pages["raft.pdf"] = ["consensus evidence. " * 250]
+    document_rag.ingest_documents(settings, embeddings)
+    store = document_rag.get_vector_store(settings, embeddings)
+    chunks = {chunk.metadata["chunk_id"]: chunk
+              for chunk in document_rag.load_chunks(settings.documents_path)}
+    seeds = [chunks["raft.pdf:p1:c3"], chunks["raft.pdf:p1:c1"]]
+    monkeypatch.setattr(store, "as_retriever", Mock(return_value=Mock(invoke=Mock(return_value=seeds))))
+    monkeypatch.setattr(document_rag, "get_vector_store", lambda *args: store)
+    settings = settings.model_copy(update={"retrieval_top_k": 2})
+    result = document_rag.retrieve_documents("consensus", settings, embeddings)
+    ids = [chunk.metadata["chunk_id"] for chunk in result]
+    assert ids == ["raft.pdf:p1:c3", "raft.pdf:p1:c1", "raft.pdf:p1:c4", "raft.pdf:p1:c2"]
+    assert "raft.pdf:p1:c5" in chunks and "raft.pdf:p1:c5" not in ids
+    assert len(result) == 2 * settings.retrieval_top_k
+    assert len(ids) == len(set(ids))

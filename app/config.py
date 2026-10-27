@@ -29,13 +29,13 @@ class Settings(BaseSettings):
     supervisor_model: str = "gpt-5.1"
 
     research_provider: Literal["openai", "google"] = "google"
-    research_model: str = "gemini-2.5-flash"
+    research_model: str = "gemini-3.5-flash-lite"
 
     code_provider: Literal["openai", "google"] = "openai"
     code_model: str = "gpt-5.1"
 
     summary_provider: Literal["openai", "google"] = "google"
-    summary_model: str = "gemini-2.5-flash"
+    summary_model: str = "gemini-3.5-flash-lite"
 
     tavily_api_key: str | None = None
     tavily_timeout_seconds: float = Field(default=30, gt=0, le=120)
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     )
 
     retrieval_top_k: int = Field(
-        default=5,
+        default=10,
         ge=1,
         le=20,
     )

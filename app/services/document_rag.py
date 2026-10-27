@@ -131,12 +131,49 @@ def ingest_documents(
 def retrieve_documents(
     query: str, settings: Settings | None = None, embeddings: Embeddings | None = None,
 ) -> list[Document]:
-    """Retrieve top-k evidence without downloading or rebuilding the corpus."""
+    """Retrieve top-k matches plus one continuation chunk per match.
+
+    Prefer the next chunk on the same page. At page end, try the first chunk of
+    the next PDF page in the same paper. Keep ranked matches first and deduplicate.
+    At most 2*k chunks are returned, with original text and citation metadata.
+    """
     if not query.strip():
         raise ValueError("Document query cannot be empty")
     settings = settings or get_settings()
     store = get_vector_store(settings, embeddings)
-    return store.as_retriever(search_kwargs={"k": settings.retrieval_top_k}).invoke(query)
+    matches = store.as_retriever(search_kwargs={"k": settings.retrieval_top_k}).invoke(query)
+    seen = {chunk.metadata["chunk_id"] for chunk in matches}
+    next_ids = []
+    for chunk in matches:
+        page_prefix, chunk_number = chunk.metadata["chunk_id"].rsplit(":c", 1)
+        next_id = f"{page_prefix}:c{int(chunk_number) + 1}"
+        if next_id not in seen:
+            next_ids.append(next_id)
+            seen.add(next_id)
+    if next_ids:
+        stored = store.get(ids=next_ids, include=["documents", "metadatas"])
+        neighbors = {}
+        for chunk_id, text, metadata in zip(stored["ids"], stored["documents"], stored["metadatas"]):
+            neighbors[chunk_id] = Document(id=chunk_id, page_content=text, metadata=metadata)
+        next_pages = {}
+        for chunk in matches:
+            page_prefix, chunk_number = chunk.metadata["chunk_id"].rsplit(":c", 1)
+            next_id = f"{page_prefix}:c{int(chunk_number) + 1}"
+            if next_id in next_ids and next_id not in neighbors:
+                metadata = chunk.metadata
+                next_pages[next_id] = f"{metadata['source']}:p{metadata['page'] + 1}:c1"
+        page_ids = list(set(next_pages.values()) - seen)
+        if page_ids:
+            stored = store.get(ids=page_ids, include=["documents", "metadatas"])
+            for chunk_id, text, metadata in zip(stored["ids"], stored["documents"], stored["metadatas"]):
+                neighbors[chunk_id] = Document(id=chunk_id, page_content=text, metadata=metadata)
+        seen = {chunk.metadata["chunk_id"] for chunk in matches}
+        for next_id in next_ids:
+            neighbor_id = next_id if next_id in neighbors else next_pages.get(next_id)
+            if neighbor_id in neighbors and neighbor_id not in seen:
+                matches.append(neighbors[neighbor_id])
+                seen.add(neighbor_id)
+    return matches
 
 
 if __name__ == "__main__":
