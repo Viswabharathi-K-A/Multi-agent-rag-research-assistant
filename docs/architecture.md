@@ -20,7 +20,7 @@ Implemented: three specialized workers, an asynchronous LLM supervisor, LangGrap
 | `app/llm.py` | Construct the configured OpenAI or Google model for each role. |
 | `app/services/document_rag.py` | Load/chunk PDFs, embed/index them in Chroma, and retrieve evidence. |
 | `app/services/tavily_mcp.py` | Discover/invoke Tavily search through Remote MCP and normalize evidence. |
-| `app/main.py` | Serve static assets and `/health`; run the graph through `POST /chat` and translate generation/state updates into SSE. |
+| `app/main.py` | Initialize cached embeddings during lifespan startup, serve static assets and `/health`, and run the graph through `POST /chat` with SSE. |
 | `app/schemas.py` | Validate chat input and define routing, citation, trace, and stream envelopes. |
 | `app/static/app.js` | Send queries, incrementally parse SSE, and render responses plus per-turn inspection panels. |
 | `app/static/style.css` | Provide responsive layout, response whitespace preservation, and readable citation links with keyboard-focus styling. |
@@ -90,7 +90,7 @@ The selected corpus contains 15 distributed systems PDFs (including Raft, GFS, S
 
 `load_chunks()` recursively reads PDFs with `pypdf`, ignores symlinks/other extensions and blank pages, and splits each page independently into up to 800 characters with configured overlap 120. Corrupt PDFs, PDFs requiring a nonempty password, and textless PDFs fail ingestion; there is no OCR. Metadata preserves corpus-relative `source`, title, 1-based PDF file page, `source_kind`, document/chunk IDs, and page-relative start offset. Example citation ID: `raft.pdf:p7:c1`. IDs identify positions, not historical content versions.
 
-Local `sentence-transformers/all-MiniLM-L6-v2` embeddings run on CPU with normalized vectors and a cached model instance. Initial use may download weights. `ingest_documents()` manually re-embeds all chunks in batches of 64, prepares vectors before writes, upserts current IDs, then removes stale IDs. Failed writes can leave a partial rebuild; run ingestion while requests are stopped. A changed embedding-model name requires a new collection name. Retrieval rejects missing/empty indexes rather than ingesting during requests.
+Local `sentence-transformers/all-MiniLM-L6-v2` embeddings run on CPU with normalized vectors and a cached model instance. FastAPI lifespan initializes this model before accepting requests using `await asyncio.to_thread(get_embeddings, settings.embedding_model)`. Retrieval reuses the existing cache. Initialization may download weights if assets are missing; deployment must package cached model assets rather than depend on a startup download. `ingest_documents()` manually re-embeds all chunks in batches of 64, prepares vectors before writes, upserts current IDs, then removes stale IDs. Failed writes can leave a partial rebuild; run ingestion while requests are stopped. A changed embedding-model name requires a new collection name. Retrieval rejects missing/empty indexes rather than ingesting during requests.
 
 Defaults: `CORPUS_DIR=./data/corpus`, `CHROMA_PERSIST_DIR=./data/chroma_index`, `CHROMA_COLLECTION=technical_documents`, `RETRIEVAL_TOP_K=10`. Relative paths resolve against the project root. Retrieval uses a LangChain Chroma retriever, keeps ranked matches first, and adds at most one continuation per match: the next same-page chunk, otherwise the first chunk of the immediately following PDF page in the same paper. Results are deduplicated, preserve metadata, and contain at most 20 chunks at the default k. There is no relevance cutoff or reranking. The continuation strategy and measured trade-offs are documented in the evaluation report.
 
@@ -108,7 +108,37 @@ The live browser query exposed a final-answer formatting failure: the Supervisor
 
 This validates reference identity, not claim-level entailment, citation coverage for every claim, or web URL correctness. It recognizes malformed PDF references through the `.pdf:p` marker; it is not a general citation parser. Summary's retained presence check does not require every supplied web URL. Code does not directly invoke these helpers. Validation does not retract worker tokens already streamed to the browser; failed stored output is cleared, but intermediate streamed text is not a verified final answer. No extra paid calls or retries are introduced. The strict validator was exercised in the second live query below. The third live query below completed successfully with normalization and context filtering installed. That run had no failed workers, so live failed-context filtering was not exercised; its coverage remains offline.
 
-Research retrieval and generation each have `RESEARCH_TIMEOUT_SECONDS` (default 60). Code and Summary each use that setting for their worker operation. Chroma calls use `asyncio.to_thread`; cancellation cannot forcibly stop underlying thread computation. The provider factory sets a 30-second timeout and two retries. These are not a whole-workflow deadline.
+### Offline retrieval timing and startup initialization
+
+Two fresh-process diagnostics used cached assets, offline Hugging Face/Transformers settings, and a socket audit hook blocking network connections. No connections were attempted and no provider APIs were called. In each process, the same query returned the same 16 chunk IDs across three retrievals. These are local Windows timings, not Cloud Run or statistical performance benchmarks.
+
+| Stage | Observed time |
+| --- | ---: |
+| Import document RAG module/dependencies | 4.98-5.11 seconds |
+| First complete retrieval including lazy initialization | 26.4954 seconds |
+| Embedding initialization inside that first retrieval | 25.9553 seconds |
+| Separately measured `sentence_transformers` lazy imports in second process | 24.8467 seconds |
+| Model construction after those imports | 0.9845 seconds |
+| Repeated retrievals | 0.1518-0.1810 seconds |
+
+The first-process Chroma opening time includes model initialization: 26.4321 seconds, of which 25.9553 seconds was embedding initialization. Query embedding took 0.017-0.040 seconds across both processes; search/continuation work was approximately 0.006-0.028 seconds. Nested times must not be added together. These measurements identify a substantial lazy-import cost and motivate moving initialization outside the worker timeout; they do not establish the precise cause of the earlier live timeout. Temporary scripts/reports are `csci599-retrieval-timing.py`, `csci599-retrieval-timing-report.json`, `csci599-retrieval-import-timing.py`, and `csci599-retrieval-import-timing-report.json`.
+
+Startup now logs embedding initialization and elapsed time, awaits the loader on a thread, and yields lifespan control only on success. A loading exception propagates and prevents application startup. The existing `lru_cache` supplies the same model to subsequent retrievals; no extra model registry, configuration flag, or dependency is added. This moves cost into startup, including for web-only requests, and does not eliminate cold-start time. Chroma is still opened during retrieval, no corpus ingestion or warm-up query occurs at startup, and the first actual embedding computation remains in retrieval. Cloud Run startup readiness/time budgets and packaged model assets must be validated during deployment. The new startup behavior has mocked offline tests and the real offline lifespan verification below. Cloud Run startup and live chat after this change remain unverified.
+
+Actual offline startup verification then exercised the real FastAPI lifespan and `/health` through TestClient with cached model assets. It did not start a listening uvicorn server. The external network was blocked by a socket audit hook, with offline model settings enabled. The first harness attempt stopped before lifespan because the guard blocked the loopback socket pair Windows needs for asyncio. The corrected run allowed literal loopback addresses only: one loopback connection occurred and zero external connection attempts occurred.
+
+| Real offline startup check | Observed result |
+| --- | ---: |
+| Application/test-client imports before lifespan | 11.0907 seconds |
+| Embedding initialization within lifespan | 26.3355 seconds |
+| Startup context entry including initialization | 26.3748 seconds |
+| First document retrieval after startup | 0.4283 seconds |
+| Retrieved chunks | 16 |
+| Health status after startup | HTTP 200 |
+
+The embedding cache had one miss and one model instance at startup completion. An explicit identity check confirmed the cached instance was the startup-loaded model. Retrieval increased cache hits without adding a miss. Thus real cached assets initialized before requests and retrieval reused the model. Import, startup, and nested initialization times must not all be added together; total measured process work was 37.9066 seconds. This one local run verifies the lifecycle/cache behavior, not the exact cause of earlier timeouts or deployed latency. No LLM/provider/Tavily APIs, corpus ingestion, or new model downloads occurred. Temporary artifacts: `csci599-startup-warmup.py` and `csci599-startup-warmup-report.json`.
+
+Research retrieval and generation each have `RESEARCH_TIMEOUT_SECONDS` (default 60). Code and Summary each use that setting for their worker operation. Chroma calls use `asyncio.to_thread`; cancellation cannot forcibly stop underlying thread computation. The provider factory sets a 30-second timeout and two retries. Embedding-model initialization now occurs before requests, outside these worker timeouts. These are not a whole-workflow deadline.
 
 ## Tavily Remote MCP sharing
 
@@ -148,16 +178,19 @@ Response paragraphs use `white-space: pre-wrap` to preserve generated line break
 
 Application execution, offline tests, answer collection, and RAGAS scoring share Python 3.13 `.venv` and `requirements.txt`. Consolidated pins include OpenAI SDK 2.54.0, jiter 0.14.0, pydantic-settings 2.16.1, python-dotenv 1.2.4, and LangChain Community 0.3.31 (retaining a module RAGAS 0.4.3 imports). The consolidation previously passed clean-environment offline checks, RAGAS imports, graph compilation, and provider/tool construction. The local live query subsequently exercised OpenAI Supervisor and Google Research calls under the shared environment. Historical RAGAS scores were not regenerated; consolidated live scoring and other integrations remain unverified.
 
-The latest full offline suite passed **187 tests in 22.12 seconds** on 2026-10-27 after citation normalization, filtered Supervisor context, and their regression tests. The focused Supervisor/graph/citation suite passed **68 tests in 10.59 seconds**; Research/citations passed **69 in 12.74 seconds**, and Summary/citations passed **56 in 9.40 seconds**. Focused totals overlap and must not be added together. Coverage includes health/static serving, PDF ingestion and real temporary Chroma with fake embeddings, Research LCEL/modes/failures/citations, continuation retrieval, Code inspection/tool-loop failures, Summary grounding/citations/failures, answer collection, and the checks below. External generation/retrieval boundaries are mocked. Direct MCP transport/schema tests remain missing. Offline results do not demonstrate live-model citation compliance or deployed MCP sharing.
+The latest full offline suite passed **190 tests in 10.84 seconds** on 2026-10-27 after startup embedding initialization and three new lifespan tests. The focused health/chat suite passed **21 tests in 0.73 seconds**. Earlier citation verification passed 187 tests in 22.12 seconds; these timings are not a controlled comparison. The focused Supervisor/graph/citation suite passed **68 tests in 10.59 seconds**; Research/citations passed **69 in 12.74 seconds**, and Summary/citations passed **56 in 9.40 seconds**. Focused totals overlap and must not be added together. Coverage includes health/static serving, PDF ingestion and real temporary Chroma with fake embeddings, Research LCEL/modes/failures/citations, continuation retrieval, Code inspection/tool-loop failures, Summary grounding/citations/failures, answer collection, and the checks below. External generation/retrieval boundaries are mocked. Direct MCP transport/schema tests remain missing. Offline results do not demonstrate live-model citation compliance or deployed MCP sharing.
 
 | Added test file | Cases | Verified behavior |
 | --- | --- | --- |
+| `tests/test_health.py` | 7 | Health/static endpoints, embedding initialization before requests, startup waiting without blocking the event loop, and propagation of initialization failure. |
 | `tests/test_supervisor.py` | 25 | Failed-result context filtering, unchanged state, preserved successful evidence, final citation normalization without retries, unsupported-reference rejection, delegation/trace metadata, and iteration limits without settings/model construction. |
 | `tests/test_citations.py` | 39 | Strict reference identity, safe combined-reference normalization, unchanged evidence, idempotence, comma-containing IDs, and continued rejection of unsupported groups. |
 | `tests/test_research.py` | 30 | LCEL evidence flow, source modes, failures/cancellation, citation rejection before the appendix, and successful normalization with one generation call. |
 | `tests/test_summary.py` | 17 | Supplied findings/direct retrieval, evidence preservation, failures/cancellation, citation rejection, and successful normalization before the appendix. |
 | `tests/test_agent_graph.py` | 4 | Real compiled graph and nodes with mocked external boundaries: all three workers execute with accumulated evidence/citations/traces; a model failure in each worker returns to the supervisor and finishes with an honest failure response. |
 | `tests/test_chat.py` | 14 | HTTP input rejection; SSE framing; real graph/LCEL with streaming fake generation; routing/traces/citations; output filtering; per-request citation deduplication; safe errors and missing answers; a token yielded before graph completion. |
+
+`tests/conftest.py` provides an autouse fixture that mocks only the `get_embeddings` name imported by `app.main`, so lifespan cannot load/download models in normal tests. Retrieval tests retain their own mocks/fake embeddings; the shared fixture does not replace `document_rag.get_embeddings`. The new startup tests exercise actual lifespan with controlled mock loading. The normal suite made no paid calls and did not load real models. A separate offline lifespan diagnostic loaded cached model assets, as documented above.
 
 The graph test's mocked supervisor reads actual accumulated results before returning its next decision. This verifies state propagation and dispatch, not whether a live LLM chooses the right agent. The success path checks that source text/page metadata survive all workers and that both configured provider labels appear in call traces; mocked labels are not evidence of real provider requests. The failure paths also check that private provider exception text is not exposed in graph output. `git diff --check` passed after the test additions.
 
@@ -237,11 +270,11 @@ Ingestion is an explicit operation after supplying the corpus, not part of pytes
 
 ## Remaining work
 
-Latest full offline execution: **187 passed in 22.12 seconds**. `git diff --check` passed after this documentation update. This documentation step made no paid API calls.
+Latest full offline execution: **190 passed in 10.84 seconds**. `git diff --check` passed after this documentation update. This documentation step made no paid API calls.
 
 - **P0 - Routing evidence:** Demonstrate both providers in the deployed application and retain inspectable call records. One local live document query already exercised OpenAI and Google with browser routing records; fixed assignments remain valid and dynamic per-call routing is optional.
 - **P0 - Orchestration verification:** Extend live verification to Code/Summary paths and worker-failure handling. Corrected final citation links passed for one local document-only query; this does not establish general live reliability. Supervisor -> Research -> Supervisor execution is locally verified; broader offline success/failure tests are implemented. Further paid calls require separate approval.
 - **P0 - MCP evidence:** Verify current transport behavior and demonstrate Research and Code invoking the same Tavily MCP tool in distinct contexts; live calls require approval.
 - **P0 - Delivery:** Package Linux-compatible dependencies and model/index assets, deploy on Cloud Run, and verify deployed arbitrary-query behavior. A local document-only FastAPI/provider/browser path and mocked responsive UI checks are complete, subject to the citation limitation above. Finish README and process-log deliverables.
 - **P0 - Evaluation and reproducibility:** Document corpus acquisition/attribution, retain reproducible artifacts, and finish provider comparison, token/cost estimates, retrieval/LLM/total latency, TTFT, and cold/warm deployment measurements. Existing Research RAGAS results are already recorded.
-- **P1 - Reliability:** Diagnose the observed local retrieval timeout with offline stage timing before changing timeout settings. Review supervisor API failure handling, deterministic tool restrictions, context/workflow cost bounds, retries, and citation entailment limitations as integration proceeds.
+- **P1 - Reliability:** Startup now moves the measured lazy embedding initialization outside request timeouts. Verify real startup and deployment timing, and investigate any recurring retrieval timeout before changing timeout settings. Review supervisor API failure handling, deterministic tool restrictions, context/workflow cost bounds, retries, and citation entailment limitations as integration proceeds.

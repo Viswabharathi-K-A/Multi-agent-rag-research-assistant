@@ -1,7 +1,9 @@
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from time import perf_counter
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -14,6 +16,7 @@ from app.config import get_settings
 from app.schemas import (
     AgentTrace, ChatRequest, Citation, HealthResponse, RoutingDecision, StreamEvent,
 )
+from app.services.document_rag import get_embeddings
 
 
 settings = get_settings()
@@ -47,6 +50,11 @@ async def lifespan(app: FastAPI):
             parents=True,
             exist_ok=True,
         )
+
+    logger.info("Initializing document embedding model")
+    started = perf_counter()
+    await asyncio.to_thread(get_embeddings, settings.embedding_model)
+    logger.info("Document embedding model ready in %.2f seconds", perf_counter() - started)
 
     yield
 
