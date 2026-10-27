@@ -61,12 +61,30 @@ h2 {
 .messages {
     flex: 1;
     overflow-y: auto;
-    white-space: pre-wrap;
     overflow-wrap: anywhere;
 }
 
-.welcome {
+.messages p {
+    white-space: pre-wrap;
+}
+
+.messages .welcome {
     color: #94a3b8;
+    white-space: normal;
+}
+
+a,
+a:visited {
+    color: #93c5fd;
+}
+
+a:hover {
+    color: #bfdbfe;
+}
+
+a:focus-visible {
+    outline: 2px solid #bfdbfe;
+    outline-offset: 3px;
 }
 
 #chat-form {
