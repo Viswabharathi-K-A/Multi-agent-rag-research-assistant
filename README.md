@@ -6,6 +6,10 @@ Research uses a Chroma-backed LCEL RAG pipeline and Tavily Remote MCP. Research
 and Code share the MCP search integration. Provider/model choices and reasons,
 execution traces, and source excerpts are inspectable in the UI.
 
+Public application: [Cloud Run](https://csci599-multi-agent-b7rvvpibna-uw.a.run.app/).
+Revision `csci599-multi-agent-00002-xpp` serves the updated corpus-aware supervisor
+prompt. Public homepage/health checks and live document/web requests succeeded.
+
 ## Local setup
 
 Use Python 3.13. The pinned environment has been verified on Windows, and the
@@ -24,8 +28,9 @@ models before live use. No paid API calls are made by normal offline tests.
 
 Supply the approved PDFs under `data/corpus/`; this directory is intentionally
 not tracked. The recorded corpus contains 15 distributed-systems papers, 249
-text-bearing pages, and 1,891 chunks. Corpus acquisition/attribution and the actual
-files must accompany reproduction separately; a Git checkout is insufficient.
+text-bearing pages, and 1,891 chunks. Publication/acquisition links and edition
+caveats are documented in [corpus attribution](docs/architecture.md#corpus-attribution-and-acquisition).
+The exact PDF editions must accompany reproduction separately; a Git checkout is insufficient.
 
 ```powershell
 # Explicit offline ingestion; may download public embedding model assets.
@@ -48,7 +53,7 @@ This query makes paid generation calls. Web research additionally uses Tavily qu
 node -e "const html=require('fs').readFileSync('app/static/index.html','utf8'); new (require('vm').Script)(html.match(/<script>([\s\S]*?)<\/script>/)[1]);"
 ```
 
-The latest recorded full offline suite passed **279 tests in 13.18 seconds**;
+The latest recorded full offline suite passed **292 tests in 14.63 seconds**;
 verification details are recorded in [architecture.md](docs/architecture.md). Tests use mocked
 model/MCP boundaries and fake embeddings, including real graph execution and
 temporary Chroma integration. Passing them does not establish live model quality.
@@ -81,15 +86,17 @@ The build downloads embedding assets and generates the index on Linux; runtime
 model downloads are disabled and the server runs as a non-root user. No provider
 keys are needed during image build. Original PDFs, local Windows indexes, evaluation
 outputs, and submission documentation are excluded from the final runtime image.
-Startup creates an empty corpus directory; document queries use the bundled index.
+Production document queries use the bundled index; startup warms cached embeddings.
 
-The multi-stage image built successfully at **750,490,613 bytes (about 716 MiB)**.
-Without API keys, local smoke checks verified injected `PORT=8090`, HTTP 200 for
+An earlier multi-stage image built at **750,490,613 bytes (about 716 MiB)**.
+Without API keys, its local smoke checks verified injected `PORT=8090`, HTTP 200 for
 the homepage, `/health`, and `/static/app.js`, cached offline model loading,
 document retrieval with citation metadata, all 1,891 indexed chunks, UID 10001,
 and dependency consistency. The temporary container was stopped after testing.
 Embedding warm-up took 29.80 seconds in that local run; this is not a Cloud Run
-cold-start or TTFT measurement. Cloud Run resource use and startup remain unverified.
+cold-start or TTFT measurement. The later deployed rebuild indexed the same 15
+documents/1,891 chunks, contained the updated prompt, and passed `pip check`.
+Confirmed deployed cold/warm timings are recorded in the evaluation report.
 
 With Docker Desktop's Linux engine running:
 
@@ -106,7 +113,9 @@ The application claims no persistent multi-turn conversation state.
 
 ## Cloud Run deployment recipe
 
-These commands are a preparation recipe, **not an executed deployment**. Cloud
+The application is deployed; these commands describe setup for a fresh project,
+using example repository/identity/secret names rather than the existing project's
+exact resource names. The recipe has not been replayed in a second fresh project. Cloud
 services, registry storage, build resources, and provider calls may incur charges.
 Select a project and budget and complete the local image check first. Follow the
 official [deployment guide](https://docs.cloud.google.com/run/docs/deploying) and
@@ -150,12 +159,17 @@ gcloud run services describe $service --region=$region --format="value(status.ur
 gcloud run services proxy $service --region=$region --port=8081
 ```
 
-Use the authenticated proxy at `http://localhost:8081` for initial checks. For the
-grader's public URL, explicitly approve public access and grant invocation access
-according to project policy. A public chat endpoint can consume API quota; the
-instance cap is not a per-user usage limit or spending cap. Record the resulting
-URL, configuration, and test evidence. Deployment and grading access are incomplete
-until the actual URL works for the intended user.
+Use the authenticated proxy at `http://localhost:8081` for initial checks. When
+ready to expose the service for grading, grant public invocation access:
+
+```powershell
+gcloud run services add-iam-policy-binding $service --project=$projectId --region=$region --member=allUsers --role=roles/run.invoker
+```
+
+The existing deployment already has this binding and was checked without
+authentication. A public chat endpoint can consume API quota; the instance cap
+is not a per-user usage limit or spending cap. Record your own resulting URL
+and verify it works for the intended user.
 
 ## Costs, status, and limitations
 
@@ -181,16 +195,36 @@ OpenAI/Google and web search uses Tavily. RAGAS scoring separately uses an OpenA
 judge and evaluation embeddings. Provider access, quotas, and prices must be
 checked in the relevant account before spending; this repository makes no fixed
 price or free-tier claim. Capture actual input/output usage and searches, then
-estimate cost using dated rates or actual bills. No dollar cost has been measured yet.
+estimate cost using dated rates or actual bills. The evaluation report includes
+dated standard-price generation estimates of $0.02575 for one C++ web request
+and $0.02674 for one document request. These exclude Tavily, cloud charges,
+credits, and discounts and are not actual bills.
 
-Selected local live checks demonstrated both generation providers and actual
-Research/Code Remote MCP use. The newest completion guard and nullable MCP schema
-handling still need live verification. Citation checks validate reference identity,
-not whether every claim is entailed. Code inspection checks Python syntax without
-execution. Supervisor/provider failures and cold-start performance still need
-deployed verification.
+One confirmed Cloud Run cold/warm pair used the same short Raft question.
+Client first worker text arrived at **75.84 s cold / 4.76 s warm**; complete stream
+times were **81.65 s / 10.71 s**. Startup logs confirmed a new instance for the
+first request and the same instance for the repeat. This is one observation,
+not a steady-state average. Both requests completed without stream errors.
+
+Both generation providers were exercised in deployment. A separate local
+same-evidence comparison found OpenAI/Gemini invocation times of 2.52/1.12 seconds
+and generation estimates of $0.00647/$0.00168; both covered five required facts
+and passed citation-ID checks. One question does not establish general provider
+quality or deployed comparative performance. See the evaluation report for
+prompts, usage, pricing sources, and limitations.
+
+Selected local live checks demonstrated actual Research/Code Remote MCP sharing;
+deployed request `05cedebe7fd446029cc78c538d57e4f0` also exercised the same Tavily tool from Research and Code, followed by Summary. The final response omitted the requested code snippet; shared-tool execution does not imply full task completion. Deployed
+web Research recovered from an empty search, and Raft tests selected documents.
+Broader completion-guard behavior, domain-schema enforcement, and provider-failure
+handling remain incompletely verified live. Citation checks validate reference
+identity, not every claim's support. Code inspection checks Python syntax without
+execution. Each chat request starts fresh; no durable conversation history is claimed.
 
 See [architecture](docs/architecture.md), [evaluation](docs/evaluation.md),
 and [process log](PROCESS_LOG.md) for evidence and
-remaining work. Screenshots, raw evaluation files, corpus attribution, operational
-measurements, and a verified Cloud Run URL remain submission tasks.
+remaining work. Corpus attribution is documented; final submission still needs
+the exact corpus editions and raw artifacts/screenshots supplied separately as
+appropriate and owner review of the
+process log. The TA's updated length instruction is approximately 200 words per
+section for `PROCESS_LOG.md` only, across its four required sections.

@@ -1,10 +1,10 @@
 # Architecture and implementation status
 
-Updated: 2026-10-27. Requirements: `Assignment_2_Description.pdf`, especially sections 2, 3, 5, 6, and rubric 7.2, interpreted alongside the TA clarification supplied by the project owner.
+Updated: 2026-10-28. Requirements: `Assignment_2_Description.pdf`, especially sections 2, 3, 5, 6, and rubric 7.2, interpreted alongside the TA clarification supplied by the project owner.
 
 ## Current scope
 
-Implemented: three specialized workers, an asynchronous LLM supervisor, LangGraph construction, document ingestion/retrieval, Research LCEL generation, Tavily Remote MCP access, fixed provider assignments, and offline tests. FastAPI serves a single-page frontend, `/health`, and `POST /chat` with SSE. Vanilla JavaScript connects the form to streamed worker text, final answers, routing, traces, and citations. Mocked Chrome checks passed at desktop/narrow widths. Three approved document-only browser queries exercised OpenAI and Google through FastAPI: the first exposed rewritten citation IDs, the second confirmed strict rejection but ended with a citation-failure notice, and the third completed successfully after conservative normalization and filtered Supervisor context were implemented. All 26 final citation occurrences linked to supplied evidence in the third run; broader live behavior and claim-level support remain unverified. Deployment remains unverified. Research-only RAGAS measurements are recorded in [evaluation.md](evaluation.md).
+Implemented: three specialized workers, an asynchronous LLM supervisor, LangGraph construction, document ingestion/retrieval, Research LCEL generation, Tavily Remote MCP access, fixed provider assignments, and offline tests. FastAPI serves a single-page frontend, `/health`, and `POST /chat` with SSE. Vanilla JavaScript connects the form to streamed worker text, final answers, routing, traces, and citations. Mocked Chrome checks passed at desktop/narrow widths. Three approved document-only browser queries exercised OpenAI and Google through FastAPI: the first exposed rewritten citation IDs, the second confirmed strict rejection but ended with a citation-failure notice, and the third completed successfully after conservative normalization and filtered Supervisor context were implemented. All 26 final citation occurrences linked to supplied evidence in the third run; broader live behavior and claim-level support remain unverified. Cloud Run revision `csci599-multi-agent-00002-xpp` is publicly deployed. Homepage/health checks, document and web Research, both generation providers, and one cold/warm request pair are verified. Detailed RAGAS, latency, token usage, cost estimates, and the one-question provider comparison are recorded in [evaluation.md](evaluation.md).
 
 ## Components and orchestration
 
@@ -85,15 +85,70 @@ Worker failure results return along the normal edge to the supervisor, where the
 | Code | OpenAI / `gpt-5.1` | Capability-based: code reasoning and tool-assisted analysis, including choosing inspection/search tools. |
 | Summary | Google / `gemini-3.5-flash-lite` | Cost-based: concise condensation of supplied findings/evidence without independent web research. |
 
-The overall policy is hybrid: capability-oriented orchestration/code work and cost-oriented evidence processing/summarization. These are design rationales, not measured proof that one provider is cheaper or more accurate for this workload. Exact pricing and comparative latency/quality remain evaluation work. Settings/environment overrides can change assignments; changing them requires keeping rationale and verification consistent.
+The overall policy is hybrid: capability-oriented orchestration/code work and cost-oriented evidence processing/summarization. These are design rationales, not measured proof that one provider is cheaper or more accurate for this workload. Dated standard-price estimates and a one-question same-evidence latency/coverage comparison are recorded in the evaluation report; they do not establish general provider superiority. Settings/environment overrides can change assignments; changing them requires keeping rationale and verification consistent.
 
 Per the TA clarification and assignment section 6, fixed providers per agent are acceptable. Provider routing occurs through the supervisor's choice of agent; dynamic provider selection for every call is optional. A normal Supervisor -> Research -> Supervisor or Supervisor -> Summary -> Supervisor path calls both OpenAI and Google when generation succeeds. A direct finish, a code-only path, or a worker failure before generation may use only OpenAI. Both providers must demonstrably participate in normal deployed use; merely configuring them or using OpenAI as an offline evaluator is insufficient.
 
-Current trace events carry provider/model and a reason. Worker `llm_started` reasons explain the role's cost-based or capability-based assignment, including each repeated Code model turn. Supervisor decision events include its capability-based provider rationale alongside the LLM's original delegation/source-selection or finish reason. The iteration-limit event has no provider/model because no generation occurs on that branch. The endpoint emits these call records as `routing` events, and the frontend displays them by turn. They arrive after the node returns its trace, rather than at call start. Offline tests check supervisor rationale, graph call records, and endpoint routing payloads. The approved local live query demonstrated both providers and their browser routing records on a Supervisor -> Research -> Supervisor path; deployed execution and broader query coverage remain pending. Dynamic per-call provider routing is optional.
+Current trace events carry provider/model and a reason. Worker `llm_started` reasons explain the role's cost-based or capability-based assignment, including each repeated Code model turn. Supervisor decision events include its capability-based provider rationale alongside the LLM's original delegation/source-selection or finish reason. The iteration-limit event has no provider/model because no generation occurs on that branch. The endpoint emits these call records as `routing` events, and the frontend displays them by turn. They arrive after the node returns its trace, rather than at call start. Offline tests check supervisor rationale, graph call records, and endpoint routing payloads. The approved local live query demonstrated both providers and their browser routing records on a Supervisor -> Research -> Supervisor path; subsequent deployed document/web requests also exercised both providers. Broader query coverage remains limited. Dynamic per-call provider routing is optional.
 
 ## Document RAG
 
-The selected corpus contains 15 distributed systems PDFs (including Raft, GFS, Spanner, Borg, MapReduce, and PBFT): 249 text-bearing pages and 1,891 chunks. Local indexing and two live Research evaluations are recorded in [evaluation.md](evaluation.md). The ignored `data/` directory is not bundled in Git; corpus attribution/acquisition and reproducible submission packaging remain required.
+The selected corpus contains 15 distributed systems PDFs (including Raft, GFS, Spanner, Borg, MapReduce, and PBFT): 249 text-bearing pages and 1,891 chunks. Local indexing and two live Research evaluations are recorded in [evaluation.md](evaluation.md). The ignored `data/` directory is not bundled in Git; acquisition references are listed below, while exact-file submission packaging remains outstanding.
+
+### Corpus attribution and acquisition
+
+Titles/authorship were identified from the local PDFs and publication/author
+records. Links identify publications or author-hosted copies, not a reconstructed
+history of where the owner originally downloaded each file. Original acquisition
+dates and URLs were not recorded. Author lists abbreviated with "et al." are
+available in full in the linked publications.
+
+| Local filename | Paper and attribution | Publication/acquisition reference | Local PDF pages |
+| --- | --- | --- | ---: |
+| `A New Presumed Commit Optimization for Two Phase Commit.pdf` | Butler Lampson and David Lomet, *A New Presumed Commit Optimization for Two Phase Commit*, VLDB 1993 | [Author's publication text](https://bwlampson.site/49-NewPCOpt/49-NewPCOptOCR.htm) (OCR reference; obtain the scanned paper through the author's publication site) | 11 |
+| `Always Measure One Level Deeper.pdf` | John Ousterhout, *Always Measure One Level Deeper*, Communications of the ACM, 2018 | [Author-hosted PDF](https://web.stanford.edu/~ouster/cgi-bin/papers/measureDeeper.pdf) | 10 |
+| `Borg.pdf` | Abhishek Verma et al., *Large-scale cluster management at Google with Borg*, EuroSys 2015 | [Google Research](https://research.google/pubs/large-scale-cluster-management-at-google-with-borg/) | 17 |
+| `Chain Replication for Supporting High Throughput and Availability.pdf` | Robbert van Renesse and Fred B. Schneider, *Chain Replication for Supporting High Throughput and Availability*, OSDI 2004 | [USENIX PDF](https://www.usenix.org/event/osdi04/tech/full_papers/renesse/renesse.pdf) | 14 |
+| `dapper-2010-1.pdf` | Benjamin H. Sigelman et al., *Dapper, a Large-Scale Distributed Systems Tracing Infrastructure*, Google technical report, 2010 | [Google Research](https://research.google/pubs/dapper-a-large-scale-distributed-systems-tracing-infrastructure/) | 14 |
+| `Exploiting_commutativity_for practical_fast_replication.pdf` | Seo Jin Park and John Ousterhout, *Exploiting Commutativity For Practical Fast Replication*, NSDI 2019 | [USENIX publication/download](https://www.usenix.org/conference/nsdi19/presentation/park) | 19 |
+| `gfs-sosp2003.pdf` | Sanjay Ghemawat, Howard Gobioff, and Shun-Tak Leung, *The Google File System*, SOSP 2003 | [Google Research](https://research.google/pubs/the-google-file-system/) | 15 |
+| `Implementing Linearizability at large scale and low latency.pdf` | Collin Lee, Seo Jin Park, Ankita Kejriwal, Satoshi Matsushita, and John Ousterhout, *Implementing Linearizability at Large Scale and Low Latency*, SOSP 2015 | [Author-hosted PDF](https://web.stanford.edu/~ouster/cgi-bin/papers/rifl.pdf), DOI `10.1145/2815400.2815416` | 17 |
+| `Mapreduce.pdf` | Jeffrey Dean and Sanjay Ghemawat, *MapReduce: Simplified Data Processing on Large Clusters*, OSDI 2004 | [Google Research](https://research.google/pubs/mapreduce-simplified-data-processing-on-large-clusters/) | 13 |
+| `Practical Byzantine Fault Tolerance.pdf` | Miguel Castro and Barbara Liskov, *Practical Byzantine Fault Tolerance*, OSDI 1999 | [USENIX publication](https://www.usenix.org/conference/osdi-99/presentation/practical-byzantine-fault-tolerance) | 14 |
+| `raft.pdf` | Diego Ongaro and John Ousterhout, *In Search of an Understandable Consensus Algorithm (Extended Version)*, 2014 | [Authors' Raft site and extended-paper link](https://raft.github.io/) | 18 |
+| `RamCloud.pdf` | John Ousterhout et al., *The RAMCloud Storage System*, ACM Transactions on Computer Systems, 2015 | [Publisher DOI](https://dl.acm.org/doi/10.1145/2806887) | 56 |
+| `Spanner.pdf` | James C. Corbett et al., *Spanner: Google's Globally-Distributed Database*, OSDI 2012 | [Google Research](https://research.google/pubs/spanner-googles-globally-distributed-database-2/) | 14 |
+| `The tail at Scale.pdf` | Jeffrey Dean and Luiz Andre Barroso, *The Tail at Scale*, Communications of the ACM, 2013 | [Google Research](https://research.google/pubs/the-tail-at-scale/) | 7 |
+| `vm-ft.pdf` | Daniel J. Scales, Mike Nelson, and Ganesh Venkitachalam, *The Design of a Practical System for Fault-Tolerant Virtual Machines*, ACM SIGOPS Operating Systems Review, 2010 | [Publisher DOI](https://dl.acm.org/doi/10.1145/1899928.1899932) | 10 |
+
+The page counts above describe local files, not printed article page ranges.
+Some copies contain publisher/conference cover pages, notably RAMCloud and
+linearizability. Author copies or fresh publisher downloads may have different
+front matter, extraction order, or pagination. Publication links were researched
+on 2026-10-28; ACM DOI pages returned HTTP 403 to automated fetching. Their DOI
+identities do not imply that automated downloading was verified.
+
+To prepare the corpus, obtain PDFs through the linked publication/author pages
+and place them under `data/corpus/` with the exact filenames above. Retain notices
+and attribution. For exact reproduction of the recorded citations and scores,
+use the same local PDF editions; equal titles or page counts alone do not prove
+byte-identical content. The original files still need to accompany reproduction
+separately where permitted. Replacing files can change page/chunk IDs, extracted
+text, retrieval ranking, and evaluation results; re-ingest and revalidate those
+results rather than assuming the historical measurements still apply.
+
+With dependencies installed and serving stopped, rebuild locally from the
+repository root:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.services.document_rag
+```
+
+The recorded editions produced 15 documents and 1,891 chunks. Rebuild the Docker
+image to deploy any changed corpus; its build stage performs ingestion on Linux.
+No downloader, additional service, or new dependency is needed.
+
+### Ingestion and retrieval implementation
 
 `load_chunks()` recursively reads PDFs with `pypdf`, ignores symlinks/other extensions and blank pages, and splits each page independently into up to 800 characters with configured overlap 120. Corrupt PDFs, PDFs requiring a nonempty password, and textless PDFs fail ingestion; there is no OCR. Metadata preserves corpus-relative `source`, title, 1-based PDF file page, `source_kind`, document/chunk IDs, and page-relative start offset. Example citation ID: `raft.pdf:p7:c1`. IDs identify positions, not historical content versions.
 
@@ -165,7 +220,7 @@ The offline sharing test runs the actual Research and Code nodes through the act
 
 ## Application and deployment boundary
 
-`Settings` reads root `.env` plus environment overrides. `validate_runtime()` exists but startup does not call it. Each chat request starts fresh graph state; the application claims no durable conversation memory. The browser retains visible turns for the current page, but does not send earlier turns as model context. Chroma index persistence is separate from conversation state. Linux/amd64 image packaging, dependencies, bundled model/index assets, and local offline smoke checks are verified. Cloud Run deployment and cold/warm behavior remain unverified.
+`Settings` reads root `.env` plus environment overrides. `validate_runtime()` exists but startup does not call it. Each chat request starts fresh graph state; the application claims no durable conversation memory. The browser retains visible turns for the current page, but does not send earlier turns as model context. Chroma index persistence is separate from conversation state. Linux/amd64 image packaging, dependencies, bundled model/index assets, and local offline smoke checks are verified. Cloud Run deployment and one confirmed cold/warm pair are now verified; the current deployment evidence below supersedes earlier preparation status.
 
 ### Chat/SSE execution
 
@@ -185,7 +240,7 @@ The inline JavaScript in `index.html` uses POST `fetch()` and a streaming reader
 
 Worker fragments are grouped by agent within a turn and labeled as intermediate output. Repeated calls to the same agent append to that agent's working-output section; the trace/routing panels retain individual call records. `done` creates a separate final-answer section. Inspection panels retain collapsible groups for each visible turn. Failed requests mark partial output as incomplete.
 
-Generated content uses `textContent` or text nodes, not HTML interpretation; Markdown/code fences remain plain text. With URL-based web IDs, the existing bracketed-reference renderer maps `[exact URL]` to its source excerpt just as it maps document IDs. No frontend source change or new dependency was necessary. All four agent prompts now request this bracketed web citation format; bare URLs are not converted automatically, so live model adherence remains a verification item. Known unambiguous `[source_id]` references in the final answer link to expandable source excerpts. Ambiguous IDs are not linked to a guessed source. Only HTTP(S) source locations receive external links, with `noopener noreferrer`; local document references link to evidence in the page, not a PDF-serving route. Mocked browser checks verify basic rendering and delayed SSE delivery. The third live document-only query verified streamed Research output, final-answer rendering, and exact citation links for that request. Accessibility, other live worker paths, and deployed network timing remain unverified.
+Generated content uses `textContent` or text nodes, not HTML interpretation; Markdown/code fences remain plain text. With URL-based web IDs, the existing bracketed-reference renderer maps `[exact URL]` to its source excerpt just as it maps document IDs. No frontend source change or new dependency was necessary. All four agent prompts now request this bracketed web citation format; bare URLs are not converted automatically, so live model adherence remains a verification item. Known unambiguous `[source_id]` references in the final answer link to expandable source excerpts. Ambiguous IDs are not linked to a guessed source. Only HTTP(S) source locations receive external links, with `noopener noreferrer`; local document references link to evidence in the page, not a PDF-serving route. Mocked browser checks verify basic rendering and delayed SSE delivery. The third live document-only query verified streamed Research output, final-answer rendering, and exact citation links for that request. Accessibility and other deployed worker paths remain incompletely verified. Client SSE timing is recorded in the evaluation report; it is not browser rendering latency.
 
 Response paragraphs use `white-space: pre-wrap` to preserve generated line breaks. The message container and welcome text use normal whitespace so HTML indentation does not create large blank areas. Citation links use light blue for both unvisited and visited states, a lighter hover color, and a visible keyboard-focus outline. These targeted CSS fixes retain the existing layout and add no dependencies.
 
@@ -193,7 +248,7 @@ Response paragraphs use `white-space: pre-wrap` to preserve generated line break
 
 Application execution, offline tests, answer collection, and RAGAS scoring share Python 3.13 `.venv` and `requirements.txt`. Consolidated pins include OpenAI SDK 2.54.0, jiter 0.14.0, pydantic-settings 2.16.1, python-dotenv 1.2.4, and LangChain Community 0.3.31 (retaining a module RAGAS 0.4.3 imports). The consolidation previously passed clean-environment offline checks, RAGAS imports, graph compilation, and provider/tool construction. The local live query subsequently exercised OpenAI Supervisor and Google Research calls under the shared environment. Historical RAGAS scores were not regenerated; consolidated live scoring and other integrations remain unverified.
 
-The latest full offline suite passed **279 tests in 13.18 seconds** after nullable MCP domain support and completion-guard regressions. The earlier URL-based web ID, bracketed-URL prompt, and identity/SSE regression suite passed **265 tests in 12.83 seconds** on 2026-10-27. The focused MCP/client-sharing/chat suite passed **61 tests in 1.15 seconds**. The previous four-fix suite passed 263 tests in 11.56 seconds, including 40 cases beyond the earlier 223-test suite. The focused new suite passed **33 tests in 0.43 seconds**. Earlier startup verification passed 190 tests in 10.84 seconds. The focused health/chat suite passed **21 tests in 0.73 seconds**. Earlier citation verification passed 187 tests in 22.12 seconds; these timings are not a controlled comparison. The focused Supervisor/graph/citation suite passed **68 tests in 10.59 seconds**; Research/citations passed **69 in 12.74 seconds**, and Summary/citations passed **56 in 9.40 seconds**. Focused totals overlap and must not be added together. Coverage includes health/static serving, PDF ingestion and real temporary Chroma with fake embeddings, Research LCEL/modes/failures/citations, continuation retrieval, Code inspection/tool-loop failures, Summary grounding/citations/failures, answer collection, and the checks below. External generation/retrieval boundaries are mocked. Direct MCP client tests now mock transport/session I/O while checking lifecycle, discovery/argument handling, SDK result parsing, timeouts/cancellation, cleanup, safe errors, and log filters. They do not exercise real HTTP framing, a running MCP server, discovery pagination, or full JSON Schema validation. Offline results do not demonstrate live-model citation compliance or deployed MCP sharing.
+The latest full offline suite passed **292 tests in 14.63 seconds**; the earlier suite passed **279 tests in 13.18 seconds** after nullable MCP domain support and completion-guard regressions. The earlier URL-based web ID, bracketed-URL prompt, and identity/SSE regression suite passed **265 tests in 12.83 seconds** on 2026-10-27. The focused MCP/client-sharing/chat suite passed **61 tests in 1.15 seconds**. The previous four-fix suite passed 263 tests in 11.56 seconds, including 40 cases beyond the earlier 223-test suite. The focused new suite passed **33 tests in 0.43 seconds**. Earlier startup verification passed 190 tests in 10.84 seconds. The focused health/chat suite passed **21 tests in 0.73 seconds**. Earlier citation verification passed 187 tests in 22.12 seconds; these timings are not a controlled comparison. The focused Supervisor/graph/citation suite passed **68 tests in 10.59 seconds**; Research/citations passed **69 in 12.74 seconds**, and Summary/citations passed **56 in 9.40 seconds**. Focused totals overlap and must not be added together. Coverage includes health/static serving, PDF ingestion and real temporary Chroma with fake embeddings, Research LCEL/modes/failures/citations, continuation retrieval, Code inspection/tool-loop failures, Summary grounding/citations/failures, answer collection, and the checks below. External generation/retrieval boundaries are mocked. Direct MCP client tests now mock transport/session I/O while checking lifecycle, discovery/argument handling, SDK result parsing, timeouts/cancellation, cleanup, safe errors, and log filters. They do not exercise real HTTP framing, a running MCP server, discovery pagination, or full JSON Schema validation. Offline results do not demonstrate live-model citation compliance or deployed MCP sharing.
 
 | Added test file | Cases | Verified behavior |
 | --- | --- | --- |
@@ -328,7 +383,7 @@ py -3.13 -m venv .venv
 
 Ingestion is an explicit operation after supplying the corpus, not part of pytest. Pytest excludes `live` by default. Paid/quota-limited tests require separate explicit approval. This documentation update made no paid API calls. The separately approved browser runs verify only the limited live paths described above. The later batch and retest verify local Tavily and Code/Summary execution with the documented limitations. Cloud Run and the subsequent URL-based ID/prompt change remain unverified live.
 
-## Remaining work
+## Release preparation history
 
 Release preparation added a Python 3.13 Linux Dockerfile, explicit application/corpus
 copies, build-time local embedding/index creation, offline runtime model settings,
@@ -372,11 +427,49 @@ was stopped. No paid APIs or cloud resources were invoked, and the Python suite
 was not rerun for this Dockerfile-only change. README and process-log updates
 remain separate documentation steps.
 
-Latest full offline execution: **279 passed in 13.18 seconds** after nullable MCP domain support and release preparation. The focused MCP/sharing suite passed **50 tests in 0.87 seconds**. Local Chroma inspection confirmed 1,891 chunks in `technical_documents` with matching embedding-model metadata, without loading embeddings or invoking providers. The preceding completion-guard suite passed 275 tests. `git diff --check` passed. No paid API calls were made for these changes.
+Latest full offline execution: **292 passed in 14.63 seconds** on the final audit; the earlier run passed **279 in 13.18 seconds** after nullable MCP domain support and release preparation. The focused MCP/sharing suite passed **50 tests in 0.87 seconds**. Local Chroma inspection confirmed 1,891 chunks in `technical_documents` with matching embedding-model metadata, without loading embeddings or invoking providers. The preceding completion-guard suite passed 275 tests. `git diff --check` passed. No paid API calls were made for these changes.
 
-- **P0 - Routing evidence:** Demonstrate both providers in the deployed application and retain inspectable call records. One local live document query already exercised OpenAI and Google with browser routing records; fixed assignments remain valid and dynamic per-call routing is optional.
-- **P0 - Orchestration verification:** The completion guard for extracted explicit specialist requirements is implemented and tested offline; live natural-language extraction and recovery remain unverified. Continue verification of worker-failure handling and the latest URL-based citation format. Corrected final citation links passed for one local document-only query; this does not establish general live reliability. Further paid calls require separate approval.
-- **P0 - MCP evidence:** Sharing is implemented and verified offline. Local remote transport and actual Research/Code invocation are demonstrated by the approved live checks. Retain equivalent evidence in deployment and retest the new restrictions under a separately approved live budget.
-- **P0 - Delivery:** Linux image packaging, bundled model/index assets, and local offline smoke checks are verified. Deploy on Cloud Run and verify deployed arbitrary-query behavior. A local document-only FastAPI/provider/browser path and mocked responsive UI checks are complete, subject to the citation limitation above. Finalize README and process-log deliverables.
-- **P0 - Evaluation and reproducibility:** Document corpus acquisition/attribution, retain reproducible artifacts, and finish provider comparison, token/cost estimates, retrieval/LLM/total latency, TTFT, and cold/warm deployment measurements. Existing Research RAGAS results are already recorded.
-- **P1 - Reliability:** Startup now moves the measured lazy embedding initialization outside request timeouts. Verify real startup and deployment timing, and investigate any recurring retrieval timeout before changing timeout settings. Review supervisor API failure handling, deterministic tool restrictions, context/workflow cost bounds, retries, and citation entailment limitations as integration proceeds.
+## Current deployment evidence and remaining work
+
+Public URL: [Cloud Run application](https://csci599-multi-agent-b7rvvpibna-uw.a.run.app/).
+The current revision is `csci599-multi-agent-00002-xpp`, serving 100% of traffic
+when deployment completed. Public invocation was explicitly authorized through
+`allUsers` with `roles/run.invoker`; unauthenticated homepage and health checks
+returned HTTP 200. Earlier release-preparation statements above describe their
+historical verification scope, not the current deployment status.
+
+The deployed image digest is
+`sha256:733d8a76ebba79416bf4f91fdbf2c30816c2c88c00c6b1c72f03be409bdd57a9`.
+It rebuilt all 15 papers/1,891 chunks, included the updated Supervisor prompt,
+and passed `pip check`. The prompt now identifies the distributed-systems corpus
+and directs foundational questions about its topics to documents first, while
+retaining LLM-based source selection and web fallback when permitted. No keyword
+router was added. Existing Supervisor/graph tests passed **48 tests in 1.29 s**
+after this prompt change; the subsequent local audit passed 292 offline tests in 14.63 seconds, not a full-suite run inside the deployed image.
+
+The user's supplied C++ trace demonstrates appropriate web selection, an empty
+first search, failed Research return, Supervisor redelegation with revised search
+keywords, successful retrieval, and final synthesis. The two initial Supervisor
+model calls were separated by retrieval-only worker failure; they were not a
+completion-guard reconsideration. Document tests subsequently selected the Raft
+corpus. These examples verify specific paths, not arbitrary-query correctness.
+
+An approved identical-query pair confirmed a new AUTOSCALING instance for the
+first request and the same instance for the immediate repeat. Client first worker
+text arrived at **75.84 s cold / 4.76 s warm**, with complete streams at
+**81.65 s / 10.71 s**. Cached embedding initialization took 46.72 s during startup.
+Both requests completed without stream errors and used documents with two OpenAI
+Supervisor calls and one Google Research call each. This validates one successful
+cold start, not a steady-state latency distribution. See [evaluation.md](evaluation.md)
+for request IDs, timestamps, server breakdowns, usage, and measurement limits.
+
+Both providers are demonstrated in deployed application logs. A separate approved
+local comparison used identical evidence/prompt and one call per provider, without
+retries. OpenAI/Gemini durations were 2.52/1.12 s and standard-price generation
+estimates were $0.00647/$0.00168. Both covered five required facts and passed
+citation-ID validation. This narrow Research task supports the cost-conscious
+assignment rationale but does not compare Supervisor or Code reasoning quality.
+
+- **MCP evidence completed:** Deployed request `05cedebe7fd446029cc78c538d57e4f0` invoked `tavily_search` from Research for TaskGroup and Code for asyncio.timeout, then ran Summary. Eight model calls and two searches stayed within the approved budget; no worker failed. The final response omitted the requested code snippet, so full task completion is not claimed. Trace/source evidence is saved in `data/evaluation/deployed-mcp-sharing.json`.
+- **P0 - Submission:** Corpus attribution is documented above; supply exact editions and reproduction artifacts as appropriate. README now records deployment and measurements. Review the process log in the owner's voice and follow the TA's updated instruction of approximately 200 words per section across four sections; this length applies only to PROCESS_LOG.md.
+- **P1 - Verification limits:** Broader explicit-specialist completion, live domain enforcement, provider failures, and claim-level citation support remain incompletely verified. The observed cold start is slow; report it accurately before considering changes. Further paid tests or performance work require separate approval.

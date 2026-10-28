@@ -1,107 +1,105 @@
-# Process log
+# Process log (draft for owner review)
 
 ## AI tools used
 
-I used Codex as a coding assistant for planning, implementation, code explanation,
-debugging, test generation, and documentation. The exact coding-assistant model
-version was not recorded, so I cannot reliably identify it. The application itself
-uses OpenAI for the Supervisor and Code agents and Google Gemini for Research and
-Summary by default. Those runtime models are separate from the coding assistant.
-RAGAS also uses an OpenAI judge and evaluation embeddings; evaluator usage does
-not count as demonstrating two application generation providers.
+I used Codex as a coding assistant for planning, implementation, explanations,
+debugging, testing, and documentation. The exact coding-assistant model version
+was not recorded, so I cannot reliably identify it. The application's configured
+models were OpenAI GPT-5.1 for Supervisor and Code, and Google Gemini 3.5
+Flash-Lite for Research and Summary. These runtime models are separate from the
+assistant used during development. RAGAS used an OpenAI judge and evaluation
+embeddings; that evaluator does not count toward the two-generation-provider
+requirement.
 
-My prompts were incremental rather than a single request to generate the entire
-assignment. For example, I asked, “can you tell me what changes you have made in
-each file now,” and repeatedly asked for the next plan and remaining issues. This
-helped keep architectural decisions explainable. I also supplied repository
-instructions emphasizing simple code, rubric compliance, focused offline tests,
-and explicit approval before paid API calls.
+I supplied repository instructions emphasizing simple Python, assignment
+compliance, incremental changes, and explicit approval before paid API tests.
+Instead of asking for the entire project at once, I requested plans, explanations,
+and focused changes. I repeatedly asked what remained and questioned whether
+additional files or abstractions were necessary. For example, I challenged the
+cloud/container helper scripts accumulating under evaluation and requested their
+removal.
 
-I challenged interpretations instead of accepting every proposed change. One
-example was: “I am not getting, we already incorporating mcp sharing in our
-architecture right? Our research and code agents both can make tavily mcp tool
-call.” This prompted clarification and verification of existing sharing rather
-than treating another abstraction as necessary. The resulting development process
-used AI-generated code as a proposal to inspect and test, not as evidence that a
-requirement was complete.
+Codex helped inspect framework behavior, generate mocked tests, interpret traces,
+and compare implementation claims with actual evidence. It also drafted
+architecture, evaluation, setup, and process documentation. I treated those drafts
+as material requiring review, especially when they described my personal learning.
+The workflow depended on my feedback about observed behavior and priorities,
+rather than accepting generated code or completion statements without checking.
 
 ## Development narrative
 
-Two prompt → code generation → verification cycles illustrate the development.
+The application grew around a LangGraph Supervisor coordinating Research, Code,
+and Summary specialists. Research combined document retrieval with LCEL generation
+and Tavily Remote MCP. The implementation preserved source metadata so findings
+could carry citations through later workers and final synthesis. Keeping these
+responsibilities distinct made the execution flow easier to inspect.
 
-**Cycle 1: grounding and citation recovery.** I approved live testing with “ok, I
-am giving you permission to do all the 7 test now.” After the results exposed
-problems, I asked, “ok make a plan to fix all these issues,” followed by “fix first
-4 fixes.” Codex generated changes separating concise web search queries from task
-instructions, preserving domain restrictions, validating web citations, and adding
-one citation-only repair attempt in Research and Summary. The generated logic used
-`validate_document_citations(content, sources)` and
-`validate_web_citations(content, sources)` before accepting findings. Repair reused
-the same evidence rather than performing another search. I subsequently requested,
-“ok you can now do the retest,” making verification another explicit step.
+Several iterations addressed problems exposed by live behavior. Citation failures
+led to exact-ID validation, conservative normalization, and bounded citation repair
+using the same evidence. Domain restrictions needed persistent state and support
+for Tavily's nullable array schema. A workflow that skipped an explicitly requested
+specialist motivated requested-agent completion checks. These changes addressed
+observed defects rather than introducing a generic orchestration framework.
 
-**Cycle 2: release preparation and MCP compatibility.** After reviewing pending
-work, I asked, “so check the release checklist and impelement the changes.” Codex
-extended Tavily domain-schema handling with
-`domain_options = [domain_schema] + domain_schema.get("anyOf", [])`, checking for
-a string-array branch before passing `include_domains`. It also generated a
-Dockerfile, setup/deployment instructions, a process-log draft, and a measurement
-template. The Dockerfile rebuilds the document index on Linux and caches embedding
-assets during the build. These deliverables were reviewed as preparation, not
-presented as proof of deployment. Docker-engine availability prevented the build
-verification step, leaving that part of the cycle explicitly incomplete.
+Deployment introduced different concerns: Linux dependencies, CPU-only PyTorch,
+model caching, bundled Chroma data, non-root execution, and Cloud Run's injected
+port. The multi-stage image rebuilt the index from the supplied PDFs and kept
+runtime model downloads disabled. Cloud Run was initially private; public access
+was enabled after I approved it.
+
+After deployment, a natural Raft question selected web research. The Supervisor
+prompt was updated to describe the distributed-systems corpus and prefer documents
+for its foundational topics. Subsequent tests selected document retrieval. The fix
+retained LLM source selection instead of adding a keyword router.
 
 ## Verification narrative
 
-I authorized tests and requested reconsideration based on the reported outcomes;
-Codex executed the commands and reported their results. In Cycle 1, offline tests
-checked source modes, citation rejection and repair, unchanged evidence, domain
-restrictions, and worker failures. The approved live retest then passed restricted
-web Research, mixed document/web Research, and mixed-evidence Summary. However,
-the complete browser workflow was only partial: the Supervisor skipped explicitly
-requested Summary work. That distinction prevented a successful HTTP response from
-being mistaken for successful orchestration.
+Normal tests used mocked model and MCP boundaries to avoid unnecessary charges.
+The last full offline suite passed 279 tests. After the corpus-awareness prompt
+change, 48 existing Supervisor and graph tests passed. Those tests checked
+implementation behavior but could not establish whether a live model would choose
+appropriate sources. Live tests therefore required separate approval and bounded
+request counts.
 
-Further iteration introduced persisted `required_agents`, derived pending/failed
-status, and one bounded Supervisor reconsideration before premature completion.
-Graph regressions checked both recovery and honest incomplete termination. That
-version passed 275 offline tests. It still needed a new live check of requirement
-extraction; mocked decisions cannot establish real-model interpretation.
+Two 12-question RAGAS runs evaluated document-only Research, comparing top-10
+retrieval with continuation expansion. Continuation improved answer relevance and
+context recall, with more context and lower precision. These measurements did not
+evaluate the whole multi-agent workflow. Other checks exercised real providers,
+local Research/Code MCP sharing, and selected browser paths. A deployed C++ trace
+showed an empty search returning failure, followed by Supervisor redelegation and
+successful research.
 
-In Cycle 2, nullable-schema regressions tested either `anyOf` ordering, incompatible
-schemas, unchanged discovery metadata, and continued local domain filtering. The
-focused MCP/sharing suite passed 50 tests, followed by 279 passing offline tests
-in the full suite. Local Chroma inspection confirmed 1,891 chunks and matching
-embedding-model metadata. Docker inspection reported an unavailable engine, so no
-Linux build, container startup, or Cloud Run success was claimed.
-
-Separately, two live 12-question RAGAS experiments measured document-only Research.
-Continuation improved answer relevance and recall with more context and slightly
-lower precision. Those results do not evaluate the entire multi-agent application.
+Cloud Run verification included unauthenticated homepage and health checks. An
+approved identical-query pair correlated client timings with startup logs and
+instance identity: first worker text arrived after 75.84 seconds cold and 4.76
+seconds warm. Both requests completed without stream errors. A separate one-call
+comparison supplied identical evidence to OpenAI and Gemini; both covered five
+required facts and passed citation-ID validation. Token counts supported dated
+list-price estimates. Single observations, different provider tokenization, and
+limited workloads prevent broad performance or quality conclusions.
 
 ## What was learned
 
-The main lesson from these iterations is that code generation, test execution,
-and requirement verification are separate activities. An assistant can produce a
-plausible implementation while overlooking actual API schemas or a specialist
-that the user explicitly requested. Asking for the remaining issues and requesting
-a retest was therefore more useful than repeatedly accepting completion claims.
-The MCP discussion also showed the importance of identifying an existing capability
-before adding another layer: Research and Code already shared a real Remote MCP
-client; the missing work included evidence and compatibility, not replacing the
-architecture.
+A central lesson from the recorded iterations is that implementation, execution,
+and requirement verification are separate activities. Generated code can look
+plausible while overlooking a real API schema or allowing the Supervisor to omit
+requested work. Asking for explanations and examining actual traces helped expose
+those gaps. I need to be able to explain the resulting architecture myself rather
+than rely on the assistant's description.
 
-I learned to distinguish citation identity from evidence support. An exact source
-ID proves that a reference exists in supplied evidence, but not that the passage
-supports every generated claim. Similarly, Python AST inspection establishes
-syntax and structure, not runtime correctness or security. RAGAS scores provide
-useful measurements but can disagree with inspected passages and should not be
-treated as unquestionable ground truth.
+I also need to distinguish citation identity from evidence support. A valid source
+ID proves that the reference exists in supplied evidence, but not that every
+nearby claim follows from it. Similarly, Python syntax inspection is not code
+execution, and a successful HTTP response is not proof of factual correctness or
+complete orchestration. The evaluation report preserves these limitations rather
+than presenting every successful request as a fully verified answer.
 
-The work also reinforced the value of honest limits. Mocked tests cannot prove
-live tool selection, configured provider names cannot prove actual calls, and a
-Dockerfile cannot prove a working deployment. Paid calls require a budget, and
-unknown latency or cost should remain unknown instead of being filled with
-estimates lacking evidence. Before submission, I need to review this draft,
-confirm the personal conclusions in my own words, and complete the outstanding
-deployment and measurement evidence.
+Simplicity required active scope control. Moving unnecessary helper scripts into
+another folder would not reduce the number of concepts to maintain; removing
+one-off scripts was more consistent with my instructions. Conversely, the metrics
+module serves required measurements and remains useful application code.
+
+Finally, cold-start and warm latency must be measured separately. Application
+logs alone missed most startup delay, while client timing and instance logs made
+it visible. Before submission, I must review these personal reflections, verify
+that they match my understanding, and practice explaining the design and trade-offs.

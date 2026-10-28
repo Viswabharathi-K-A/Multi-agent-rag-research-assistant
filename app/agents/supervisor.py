@@ -101,6 +101,16 @@ Final-answer citations:
   acknowledge the limitation instead of inventing an ID or source.
 
 Research source selection:
+- The indexed corpus contains distributed-systems papers covering Raft, practical
+  Byzantine fault tolerance, chain replication, two-phase commit, linearizability,
+  Spanner, GFS, MapReduce, Borg, Dapper, RAMCloud, virtual-machine fault tolerance,
+  commutativity-based replication, and latency/performance measurement.
+- For foundational questions about these topics, start with "documents" even
+  when the user does not mention papers or the corpus. For example, explaining
+  Raft leader election and producing pseudocode should start with its paper.
+  A request for code or a summary does not itself require web research.
+  This topic description identifies available material, not evidence for answers;
+  inspect retrieved findings before deciding whether they answer the question.
 - Set retrieval_mode whenever selecting the research agent, and explain the
   source choice in reason.
 - For web or both, provide search_query as concise search keywords rather than
