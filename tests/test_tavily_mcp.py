@@ -80,7 +80,7 @@ async def test_search_lifecycle_authentication_arguments_and_evidence(case, name
                                         "max_results": 2}),
     ]
     assert case["events"] == ["transport_enter", "session_enter", "session_exit", "transport_exit"]
-    assert sources == [{"source_id": "web-1", "title": "Reference",
+    assert sources == [{"source_id": "https://example.com/reference?version=1&section=2", "title": "Reference",
                         "url": "https://example.com/reference?version=1&section=2",
                         "content": "Evidence", "metadata": {"score": 0.9}}]
 
@@ -244,7 +244,7 @@ def test_sources_skip_invalid_entries_deduplicate_and_apply_limits():
 
     sources = mcp.extract_sources(response, 2)
 
-    assert [source["source_id"] for source in sources] == ["web-1", "web-2"]
+    assert [source["source_id"] for source in sources] == ["https://example.com/one", "https://example.com/two"]
     assert [source["url"] for source in sources] == ["https://example.com/one", "https://example.com/two"]
     assert sources[0]["title"] == "T" * 500
     assert sources[0]["content"] == "C" * 6000
@@ -330,3 +330,21 @@ async def test_invalid_domains_fail_before_connection(case, domain):
     with pytest.raises(mcp.RetrievalError, match="hostnames"):
         await mcp.search_web("Query", case["settings"], allowed_domains=[domain])
     case["transport"].assert_not_called()
+
+
+def test_url_ids_are_stable_across_searches_and_result_order():
+    urls = ["https://example.com/ref?version=1&section=2#details", "https://other.example/ref"]
+    first = types.CallToolResult(content=[], structured_content={"results": [
+        {"url": url, "content": "First search evidence"} for url in urls
+    ]})
+    second = types.CallToolResult(content=[], structured_content={"results": [
+        {"url": url, "content": "Second search evidence"} for url in reversed(urls)
+    ]})
+
+    first_sources = mcp.extract_sources(first, 2)
+    second_sources = mcp.extract_sources(second, 2)
+
+    assert {source["url"]: source["source_id"] for source in first_sources} == dict(zip(urls, urls))
+    assert {source["url"]: source["source_id"] for source in second_sources} == dict(zip(urls, urls))
+    assert first_sources[0]["source_id"] != second_sources[0]["source_id"]
+    assert first_sources[0]["source_id"] == second_sources[1]["source_id"]

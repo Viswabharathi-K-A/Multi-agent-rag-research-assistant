@@ -52,7 +52,7 @@ def url_matches_domains(url: str, domains: list[str]) -> bool:
 
 
 def extract_sources(response, limit: int, allowed_domains: list[str] | None = None) -> list[dict]:
-    """Read structured or JSON-text results and preserve usable evidence."""
+    """Preserve usable evidence with exact URLs as stable, cross-search IDs."""
     if response.is_error:
         raise RetrievalError("Tavily search failed")
 
@@ -95,7 +95,7 @@ def extract_sources(response, limit: int, allowed_domains: list[str] | None = No
 
         seen_urls.add(url)
         sources.append({
-            "source_id": f"web-{len(sources) + 1}",
+            "source_id": url,
             "title": title[:500],
             "url": url,
             "content": content[:6000],

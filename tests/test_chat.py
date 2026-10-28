@@ -148,6 +148,26 @@ def test_citations_deduplicate_by_location_and_id_per_request(scripted):
             assert all(citation["page"] is None for citation in citations)
 
 
+def test_url_source_ids_survive_sse_and_repeated_worker_results(scripted):
+    urls = ["https://example.com/ref?version=1&section=2#details", "https://other.example/ref"]
+    sources = [{"source_id": url, "source_kind": "web", "url": url,
+                "content": "Evidence"} for url in urls]
+    answer = "First claim [" + urls[0] + "]. Second claim [" + urls[1] + "]."
+    scripted[0].extend([
+        ("updates", {"research": {"results": [{"sources": sources}]}}),
+        ("updates", {"code": {"results": [{"sources": list(reversed(sources))}]}}),
+        ("updates", {"supervisor": {"next_agent": "finish", "final_answer": answer}}),
+    ])
+
+    with TestClient(main.app) as client:
+        events = parse_events(client.post("/chat", json={"query": "Compare these sources"}))
+
+    citations = [event["data"] for event in events if event["type"] == "citation"]
+    assert [source["source_id"] for source in citations] == urls
+    assert [source["document"] for source in citations] == urls
+    assert events[-1]["data"]["final_answer"] == answer
+
+
 @pytest.mark.parametrize("failure_at_start", [False, True])
 def test_unexpected_errors_are_safe_and_never_emit_done(scripted, failure_at_start):
     items, factory = scripted

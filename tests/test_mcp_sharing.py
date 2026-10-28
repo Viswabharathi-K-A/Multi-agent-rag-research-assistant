@@ -65,12 +65,12 @@ async def test_research_and_code_invoke_same_discovered_mcp_tool(monkeypatch):
     monkeypatch.setattr(research, "get_agent_provider_info", lambda role: ("google", "mock-research"))
     monkeypatch.setattr(code, "get_agent_provider_info", lambda role: ("openai", "mock-code"))
 
-    research_model = Mock(ainvoke=AsyncMock(return_value=AIMessage(content=f"Release findings {urls[0]}")))
+    research_model = Mock(ainvoke=AsyncMock(return_value=AIMessage(content=f"Release findings [{urls[0]}]")))
     code_model = Mock(ainvoke=AsyncMock(side_effect=[
         AIMessage(content="", tool_calls=[{
             "name": "search_technical_web", "args": {"query": queries[1]}, "id": "technical-search",
         }]),
-        AIMessage(content=f"Proposed asyncio example based on {urls[1]}"),
+        AIMessage(content=f"Proposed asyncio example based on [{urls[1]}]"),
     ]))
     code_model.bind_tools.return_value = code_model
     monkeypatch.setattr(research, "get_agent_llm", lambda role: research_model)
@@ -100,6 +100,8 @@ async def test_research_and_code_invoke_same_discovered_mcp_tool(monkeypatch):
         ]
     assert [source["url"] for source in research_result["sources"]] == [urls[0]]
     assert [source["url"] for source in code_result["sources"]] == urls
+    assert [source["source_id"] for source in research_result["sources"]] == [urls[0]]
+    assert [source["source_id"] for source in code_result["sources"]] == urls
     assert all(source["source_kind"] == "web" for source in code_result["sources"])
     for output, agent in ((research_output, "research"), (code_output, "code")):
         events = [event for event in output["trace"] if event["action"] == "retrieval_completed"]
@@ -111,7 +113,7 @@ async def test_research_and_code_invoke_same_discovered_mcp_tool(monkeypatch):
     tool_message = next(message for message in code_messages if isinstance(message, ToolMessage))
     assert tool_message.tool_call_id == "technical-search"
     assert json.loads(tool_message.content)["sources"][0]["url"] == urls[1]
-    assert urls[0] in research_result["content"] and urls[1] in code_result["content"]
+    assert f"[{urls[0]}]" in research_result["content"] and f"[{urls[1]}]" in code_result["content"]
     research_model.ainvoke.assert_awaited_once()
     assert code_model.ainvoke.await_count == 2
     documents.assert_not_called()

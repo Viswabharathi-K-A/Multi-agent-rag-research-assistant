@@ -73,7 +73,8 @@ Final-answer citations:
 - Never compress IDs into ranges such as [raft.pdf:p5:c4-c5], or combine IDs
   inside one bracket pair such as [raft.pdf:p5:c4, raft.pdf:p5:c5].
 - Paper titles and PDF page references may accompany exact IDs but must not
-  replace them. Cite web sources using their exact supplied URLs.
+  replace them. Cite web sources as [exact URL], one per bracket pair. Their
+  source_id is the supplied exact URL; copy it unchanged so the UI can link it.
 - Keep citations alongside the claims they support. If support is missing,
   acknowledge the limitation instead of inventing an ID or source.
 
