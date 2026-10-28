@@ -154,7 +154,13 @@ async def search_web(
                     if "max_results" in properties:
                         arguments["max_results"] = settings.tavily_max_results
                     domain_schema = properties.get("include_domains", {})
-                    if domains and domain_schema.get("type") == "array" and domain_schema.get("items", {}).get("type") == "string":
+                    # Tavily also advertises this optional argument as array-or-null.
+                    domain_options = [domain_schema] + domain_schema.get("anyOf", [])
+                    supports_domains = any(
+                        option.get("type") == "array" and option.get("items", {}).get("type") == "string"
+                        for option in domain_options
+                    )
+                    if domains and supports_domains:
                         arguments["include_domains"] = domains
                     for name in search_tool.input_schema.get("required", []):
                         if name not in arguments:

@@ -102,6 +102,28 @@ async def test_discovery_skips_incompatible_tools_and_omits_unadvertised_argumen
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("schema,supported", [
+    ({"anyOf": [{"type": "array", "items": {"type": "string"}}, {"type": "null"}]}, True),
+    ({"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "string"}}]}, True),
+    ({"anyOf": [{"type": "array", "items": {"type": "integer"}}, {"type": "null"}]}, False),
+    ({"anyOf": [{"type": "string"}, {"type": "null"}]}, False),
+])
+async def test_nullable_domain_schema_preserves_local_filtering(case, schema, supported):
+    case["tool"].input_schema["properties"]["include_domains"] = schema
+    case["session"].call_tool.return_value = types.CallToolResult(content=[], structured_content={
+        "results": [{"url": "https://example.com/reference", "content": "Allowed"},
+                    {"url": "https://other.org/reference", "content": "Disallowed"}]})
+    original = deepcopy(case["tool"].input_schema)
+
+    _, sources = await mcp.search_web("Query", allowed_domains=["EXAMPLE.COM."])
+
+    arguments = case["session"].call_tool.call_args.kwargs["arguments"]
+    assert arguments.get("include_domains") == (["example.com"] if supported else None)
+    assert [source["url"] for source in sources] == ["https://example.com/reference"]
+    assert case["tool"].input_schema == original
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["missing_key", "blank_key", "blank_query"])
 async def test_invalid_configuration_or_query_does_not_connect(case, failure):
     query = "Query"

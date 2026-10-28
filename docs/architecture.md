@@ -156,7 +156,7 @@ Research retrieval and generation each have `RESEARCH_TIMEOUT_SECONDS` (default 
 
 `search_web()` uses a request-scoped Streamable HTTP transport and `ClientSession`: initialize, list tools, select a supported Tavily search tool, invoke it, normalize results, and close resources. Authentication uses `https://mcp.tavily.com/mcp/?tavilyApiKey=<encoded-key>` with credentials outside source control. Tavily timeout defaults to 30 seconds. Discovery handles one tool page and checks expected argument names/types, not arbitrary schemas or discovery pagination.
 
-`search_web()` accepts optional allowed-domain hostnames. Hostnames are normalized and validated before connection. If the discovered tool advertises `include_domains` as an array of strings, the restriction is sent to the server; otherwise no unsupported argument is sent. Returned source hosts are always filtered locally before applying the result limit. Only the exact host or a subdomain is accepted, so `python.org.evil.com`, `notpython.org`, userinfo, and query-string lookalikes cannot satisfy `python.org`. Disallowed nonempty results fail without broadening the restriction or retrying the search; genuinely empty results remain empty. Code also excludes inherited findings containing out-of-domain web evidence.
+`search_web()` accepts optional allowed-domain hostnames. Hostnames are normalized and validated before connection. If the discovered tool advertises `include_domains` as a direct string array or an `anyOf` union containing a string-array branch, the restriction is sent to the server; otherwise no unsupported argument is sent. Returned source hosts are always filtered locally before applying the result limit. Only the exact host or a subdomain is accepted, so `python.org.evil.com`, `notpython.org`, userinfo, and query-string lookalikes cannot satisfy `python.org`. Disallowed nonempty results fail without broadening the restriction or retrying the search; genuinely empty results remain empty. Code also excludes inherited findings containing out-of-domain web evidence.
 
 Evidence retains HTTP(S) URLs, snippets, titles, and optional metadata; exact URLs are deduplicated. Web `source_id` now equals the exact retrieved URL, including query parameters and fragments. It is independent of result order or which agent/search retrieved it. Two different URLs no longer collide as `web-1`, while repeated retrieval of the same exact URL keeps one identity. URLs are not rewritten or canonicalized, so genuinely different URL strings remain different IDs. Result count defaults to five, titles are capped at 500 characters and snippets at 6,000. Selected transport log filters suppress Tavily endpoint/key-marker records; this is not universal credential redaction.
 
@@ -166,7 +166,7 @@ The offline sharing test runs the actual Research and Code nodes through the act
 
 ## Application and deployment boundary
 
-`Settings` reads root `.env` plus environment overrides. `validate_runtime()` exists but startup does not call it. Each chat request starts fresh graph state; the application claims no durable conversation memory. The browser retains visible turns for the current page, but does not send earlier turns as model context. Chroma index persistence is separate from conversation state. Cloud Run packaging, Linux dependencies, model/index assets, cold starts, and deployment remain unverified.
+`Settings` reads root `.env` plus environment overrides. `validate_runtime()` exists but startup does not call it. Each chat request starts fresh graph state; the application claims no durable conversation memory. The browser retains visible turns for the current page, but does not send earlier turns as model context. Chroma index persistence is separate from conversation state. Linux/amd64 image packaging, dependencies, bundled model/index assets, and local offline smoke checks are verified. Cloud Run deployment and cold/warm behavior remain unverified.
 
 ### Chat/SSE execution
 
@@ -194,7 +194,7 @@ Response paragraphs use `white-space: pre-wrap` to preserve generated line break
 
 Application execution, offline tests, answer collection, and RAGAS scoring share Python 3.13 `.venv` and `requirements.txt`. Consolidated pins include OpenAI SDK 2.54.0, jiter 0.14.0, pydantic-settings 2.16.1, python-dotenv 1.2.4, and LangChain Community 0.3.31 (retaining a module RAGAS 0.4.3 imports). The consolidation previously passed clean-environment offline checks, RAGAS imports, graph compilation, and provider/tool construction. The local live query subsequently exercised OpenAI Supervisor and Google Research calls under the shared environment. Historical RAGAS scores were not regenerated; consolidated live scoring and other integrations remain unverified.
 
-The latest full offline suite passed **265 tests in 12.83 seconds** on 2026-10-27 after URL-based web IDs, bracketed-URL prompt instructions, and identity/SSE regression coverage. The focused MCP/client-sharing/chat suite passed **61 tests in 1.15 seconds**. The previous four-fix suite passed 263 tests in 11.56 seconds, including 40 cases beyond the earlier 223-test suite. The focused new suite passed **33 tests in 0.43 seconds**. Earlier startup verification passed 190 tests in 10.84 seconds. The focused health/chat suite passed **21 tests in 0.73 seconds**. Earlier citation verification passed 187 tests in 22.12 seconds; these timings are not a controlled comparison. The focused Supervisor/graph/citation suite passed **68 tests in 10.59 seconds**; Research/citations passed **69 in 12.74 seconds**, and Summary/citations passed **56 in 9.40 seconds**. Focused totals overlap and must not be added together. Coverage includes health/static serving, PDF ingestion and real temporary Chroma with fake embeddings, Research LCEL/modes/failures/citations, continuation retrieval, Code inspection/tool-loop failures, Summary grounding/citations/failures, answer collection, and the checks below. External generation/retrieval boundaries are mocked. Direct MCP client tests now mock transport/session I/O while checking lifecycle, discovery/argument handling, SDK result parsing, timeouts/cancellation, cleanup, safe errors, and log filters. They do not exercise real HTTP framing, a running MCP server, discovery pagination, or full JSON Schema validation. Offline results do not demonstrate live-model citation compliance or deployed MCP sharing.
+The latest full offline suite passed **279 tests in 13.18 seconds** after nullable MCP domain support and completion-guard regressions. The earlier URL-based web ID, bracketed-URL prompt, and identity/SSE regression suite passed **265 tests in 12.83 seconds** on 2026-10-27. The focused MCP/client-sharing/chat suite passed **61 tests in 1.15 seconds**. The previous four-fix suite passed 263 tests in 11.56 seconds, including 40 cases beyond the earlier 223-test suite. The focused new suite passed **33 tests in 0.43 seconds**. Earlier startup verification passed 190 tests in 10.84 seconds. The focused health/chat suite passed **21 tests in 0.73 seconds**. Earlier citation verification passed 187 tests in 22.12 seconds; these timings are not a controlled comparison. The focused Supervisor/graph/citation suite passed **68 tests in 10.59 seconds**; Research/citations passed **69 in 12.74 seconds**, and Summary/citations passed **56 in 9.40 seconds**. Focused totals overlap and must not be added together. Coverage includes health/static serving, PDF ingestion and real temporary Chroma with fake embeddings, Research LCEL/modes/failures/citations, continuation retrieval, Code inspection/tool-loop failures, Summary grounding/citations/failures, answer collection, and the checks below. External generation/retrieval boundaries are mocked. Direct MCP client tests now mock transport/session I/O while checking lifecycle, discovery/argument handling, SDK result parsing, timeouts/cancellation, cleanup, safe errors, and log filters. They do not exercise real HTTP framing, a running MCP server, discovery pagination, or full JSON Schema validation. Offline results do not demonstrate live-model citation compliance or deployed MCP sharing.
 
 | Added test file | Cases | Verified behavior |
 | --- | --- | --- |
@@ -204,7 +204,7 @@ The latest full offline suite passed **265 tests in 12.83 seconds** on 2026-10-2
 | `tests/test_research.py` | 35 | LCEL evidence flow, source modes, failures/cancellation, citation rejection before the appendix, and successful normalization with one generation call. |
 | `tests/test_summary.py` | 20 | Supplied findings/direct retrieval, evidence preservation, failures/cancellation, citation rejection, and successful normalization before the appendix. |
 | `tests/test_agent_graph.py` | 9 | Real graph and workers with mocked external boundaries: evidence/citation/trace propagation, failures returning to Supervisor, skipped Summary recovery, bounded incomplete termination, and required-worker failure reporting. |
-| `tests/test_tavily_mcp.py` | 45 | Fake-key URL encoding, session ordering, compatible tool selection, advertised/required arguments, result formats, URL/metadata preservation, evidence limits, safe errors, timeout/cancellation cleanup, and sensitive-log filtering. |
+| `tests/test_tavily_mcp.py` | 49 | Fake-key URL encoding, session ordering, compatible tool selection, direct/nullable domain arguments, advertised/required arguments, result formats, URL/metadata preservation, evidence limits, safe errors, timeout/cancellation cleanup, and sensitive-log filtering. |
 | `tests/test_mcp_sharing.py` | 1 | Real Research/Code nodes and shared client invoke the same discovered tool using distinct queries, preserving evidence and traces with mocked external I/O. |
 | `tests/test_chat.py` | 15 | HTTP input rejection; SSE framing; real graph/LCEL with streaming fake generation; routing/traces/citations; output filtering; per-request citation deduplication; safe errors and missing answers; a token yielded before graph completion. |
 
@@ -316,7 +316,7 @@ The approved retest had caps of 20 generation calls and five Tavily searches, re
 | Summary | Passed | Used successful mixed evidence, preserved both citation kinds, and needed no repair. One generation call, zero searches, 2.715 seconds. |
 | Full browser workflow | Partial | Research and Code both invoked Tavily with persistent docs.python.org restrictions. Final URLs matched evidence and no citation validation failed, but Supervisor skipped the explicitly requested Summary specialist. Web citations were still plain text before the identity change. Six generation calls, two searches, 26.274 seconds. |
 
-The discovered `include_domains` schema was `anyOf[array-of-string, null]`. The client only recognizes a direct array schema, so no server-side domain argument was sent; local hostname filtering remained enforced. Nullable-schema support and explicit requested-agent completion remain pending. This retest demonstrates successful citation repair and mixed-source Summary preservation for these requests; it does not prove claim-level correctness or reliable source freshness.
+At the time of this retest, the discovered `include_domains` schema was `anyOf[array-of-string, null]`, but the client recognized only a direct array, so no server-side domain argument was sent; local hostname filtering remained enforced. Subsequent code now supports that nullable schema, with offline tests; requested-agent completion was also added afterward. Both changes still need live verification. This retest demonstrates successful citation repair and mixed-source Summary preservation for these requests; it does not prove claim-level correctness or reliable source freshness.
 
 Observed token totals: OpenAI **8,407 input / 1,141 output** over five calls; Google **25,330 input / 1,628 output** over five calls. Dollar cost was not calculated. Local artifacts: `csci599-four-fix-retest.py`, `csci599-four-fix-retest-report.json`, and `csci599-four-fix-retest-case-4.png`. The report, raw outputs, traces, and screenshot were inspected. The subsequent URL-based ID/prompt change was verified offline and with mocked Chrome, without another paid retest.
 
@@ -331,11 +331,53 @@ Ingestion is an explicit operation after supplying the corpus, not part of pytes
 
 ## Remaining work
 
-Latest full offline execution: **275 passed in 13.52 seconds** after the requested-specialist completion guard. The initial focused Supervisor/graph run passed 44 tests before two additional regressions were included in the full suite. `git diff --check` passed. No paid API calls were made for this change.
+Release preparation added a Python 3.13 Linux Dockerfile, explicit application/corpus
+copies, build-time local embedding/index creation, offline runtime model settings,
+non-root serving, and `PORT` handling. `.dockerignore` excludes local indexes,
+evaluation outputs, secrets, and personal notes. `README.md` documents setup and
+an unexecuted Cloud Run/Secret Manager recipe; `PROCESS_LOG.md` is an owner-review
+draft. Docker was initially unavailable; the subsequent Linux/amd64 build and local
+smoke verification succeeded. No cloud resources or paid APIs were invoked.
+
+The first Linux build selected unused CUDA dependencies through PyTorch. It was
+stopped, and the Dockerfile now installs pinned `torch==2.14.1` from the official
+CPU-wheel index before the shared requirements. The resulting version is
+`2.14.1+cpu`. Build-time ingestion embedded all 15 documents and 1,891 chunks.
+The earlier single-stage image size was 784,153,694 bytes (about 748 MiB). A temporary container without
+API keys ran as UID 10001; homepage and `/health` returned HTTP 200. A direct
+document query returned 18 chunks, including `raft.pdf:p6:c4`. Runtime model loading
+used cached weights with offline mode enabled. `pip check` found no broken
+requirements. Embedding warm-up logged 29.28 seconds on this local run; this is
+not total container startup, warm-request latency, or Cloud Run cold-start evidence.
+The temporary smoke container was stopped after verification. The Python suite
+was not rerun for this Dockerfile-only runtime adjustment; its latest result is below.
+
+The Dockerfile was subsequently converted to a multi-stage build, matching
+assignment section 4.2. `base` provides Python 3.13, `libgomp1`, shared settings,
+and the non-root account. `build` installs CPU-only dependencies and ingests the
+corpus. `runtime` copies the installed Python environment, application, Chroma
+index, and embedding cache. Original PDFs stay in the build stage; FastAPI creates
+an empty corpus directory at startup, but serving queries uses the bundled index.
+
+The multi-stage Linux/amd64 image built successfully at **750,490,613 bytes
+(about 716 MiB)**. A temporary container without API keys used injected `PORT=8090`,
+mapped to localhost port 8088. Homepage, `/health`, and `/static/app.js` returned
+HTTP 200. Direct retrieval returned nonempty chunks with citation metadata;
+CPU-only PyTorch, UID 10001, offline model settings, 1,891 indexed chunks, zero
+original corpus files, and `pip check` were verified. An initial assertion that
+the corpus directory itself would not exist was corrected after checking the
+startup-created empty directory; no application change was needed. Embedding
+warm-up logged **29.80 seconds** in this run. This remains a local initialization
+measurement, not deployed TTFT or a cold/warm benchmark. The temporary container
+was stopped. No paid APIs or cloud resources were invoked, and the Python suite
+was not rerun for this Dockerfile-only change. README and process-log updates
+remain separate documentation steps.
+
+Latest full offline execution: **279 passed in 13.18 seconds** after nullable MCP domain support and release preparation. The focused MCP/sharing suite passed **50 tests in 0.87 seconds**. Local Chroma inspection confirmed 1,891 chunks in `technical_documents` with matching embedding-model metadata, without loading embeddings or invoking providers. The preceding completion-guard suite passed 275 tests. `git diff --check` passed. No paid API calls were made for these changes.
 
 - **P0 - Routing evidence:** Demonstrate both providers in the deployed application and retain inspectable call records. One local live document query already exercised OpenAI and Google with browser routing records; fixed assignments remain valid and dynamic per-call routing is optional.
 - **P0 - Orchestration verification:** The completion guard for extracted explicit specialist requirements is implemented and tested offline; live natural-language extraction and recovery remain unverified. Continue verification of worker-failure handling and the latest URL-based citation format. Corrected final citation links passed for one local document-only query; this does not establish general live reliability. Further paid calls require separate approval.
 - **P0 - MCP evidence:** Sharing is implemented and verified offline. Local remote transport and actual Research/Code invocation are demonstrated by the approved live checks. Retain equivalent evidence in deployment and retest the new restrictions under a separately approved live budget.
-- **P0 - Delivery:** Package Linux-compatible dependencies and model/index assets, deploy on Cloud Run, and verify deployed arbitrary-query behavior. A local document-only FastAPI/provider/browser path and mocked responsive UI checks are complete, subject to the citation limitation above. Finish README and process-log deliverables.
+- **P0 - Delivery:** Linux image packaging, bundled model/index assets, and local offline smoke checks are verified. Deploy on Cloud Run and verify deployed arbitrary-query behavior. A local document-only FastAPI/provider/browser path and mocked responsive UI checks are complete, subject to the citation limitation above. Finalize README and process-log deliverables.
 - **P0 - Evaluation and reproducibility:** Document corpus acquisition/attribution, retain reproducible artifacts, and finish provider comparison, token/cost estimates, retrieval/LLM/total latency, TTFT, and cold/warm deployment measurements. Existing Research RAGAS results are already recorded.
 - **P1 - Reliability:** Startup now moves the measured lazy embedding initialization outside request timeouts. Verify real startup and deployment timing, and investigate any recurring retrieval timeout before changing timeout settings. Review supervisor API failure handling, deterministic tool restrictions, context/workflow cost bounds, retries, and citation entailment limitations as integration proceeds.

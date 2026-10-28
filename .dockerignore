@@ -14,5 +14,23 @@ htmlcov
 
 AGENTS.md
 
+# Submission documentation is not needed at runtime.
+README.md
+PROCESS_LOG.md
+docs/architecture.md
+docs/evaluation.md
+
 # Assignment reference material
 docs/assignment2.pdf
+
+# Personal interview notes
+docs/personal-interview-guide.md
+
+# Local outputs; the image rebuilds its own index from data/corpus.
+data/chroma_index
+data/evaluation
+uploads
+venv
+node_modules
+*.pem
+*.key
