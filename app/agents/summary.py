@@ -10,6 +10,7 @@ from app.agents.citations import normalize_document_citations, validate_document
 from app.agents.state import AgentResult, ResearchState, TraceEvent
 from app.config import get_settings
 from app.llm import get_agent_llm, get_agent_provider_info
+from app.metrics import measure_retrieval
 from app.services.document_rag import retrieve_documents
 from app.services.tavily_mcp import RetrievalError
 
@@ -49,17 +50,23 @@ async def summary_node(state: ResearchState) -> dict:
         provider, model = get_agent_provider_info("summary")
         settings = get_settings()
         completed = [result for result in state.get("results", [])
-                     if result.get("success") and result.get("content", "").strip()]
+                     if result.get("success") and result.get("content", "").strip() and all(
+                         (state.get("source_policy") != "documents" or source.get("source_kind") != "web")
+                         and (state.get("source_policy") != "web" or source.get("source_kind") != "document")
+                         for source in result.get("sources", []))]
         for result in completed:
             for source in result.get("sources", []):
                 if source not in sources:
                     sources.append(dict(source))
         async with asyncio.timeout(settings.research_timeout_seconds):
             if not completed:
+                if state.get("source_policy") == "web":
+                    raise RetrievalError("No successful web findings are available to summarize")
                 event("retrieval_started", "Retrieve document material to summarize",
                       "No successful worker findings are available", "chroma_retrieval")
                 try:
-                    chunks = await asyncio.to_thread(retrieve_documents, instruction, settings)
+                    with measure_retrieval("documents"):
+                        chunks = await asyncio.to_thread(retrieve_documents, instruction, settings)
                 except TimeoutError:
                     raise
                 except Exception:

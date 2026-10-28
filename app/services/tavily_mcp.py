@@ -10,6 +10,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 from app.config import Settings, get_settings
+from app.metrics import measure_retrieval
 
 
 class RetrievalError(Exception):
@@ -131,44 +132,45 @@ async def search_web(
         "tavilyApiKey": settings.tavily_api_key,
     })
     try:
-        async with asyncio.timeout(settings.tavily_timeout_seconds):
-            async with streamable_http_client(url) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    tools = await session.list_tools()
-                    search_tool = None
-                    for tool in tools.tools:
-                        if tool.name not in ("tavily_search", "tavily-search"):
-                            continue
-                        properties = tool.input_schema.get("properties", {})
-                        if properties.get("query", {}).get("type") == "string":
-                            search_tool = tool
-                            break
-                    if search_tool is None:
-                        raise RetrievalError("Tavily search tool not found in returned tools")
+        with measure_retrieval("web"):
+            async with asyncio.timeout(settings.tavily_timeout_seconds):
+                async with streamable_http_client(url) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        tools = await session.list_tools()
+                        search_tool = None
+                        for tool in tools.tools:
+                            if tool.name not in ("tavily_search", "tavily-search"):
+                                continue
+                            properties = tool.input_schema.get("properties", {})
+                            if properties.get("query", {}).get("type") == "string":
+                                search_tool = tool
+                                break
+                        if search_tool is None:
+                            raise RetrievalError("Tavily search tool not found in returned tools")
 
-                    properties = search_tool.input_schema.get("properties", {})
-                    arguments = {"query": query}
-                    if "search_depth" in properties:
-                        arguments["search_depth"] = "basic"
-                    if "max_results" in properties:
-                        arguments["max_results"] = settings.tavily_max_results
-                    domain_schema = properties.get("include_domains", {})
-                    # Tavily also advertises this optional argument as array-or-null.
-                    domain_options = [domain_schema] + domain_schema.get("anyOf", [])
-                    supports_domains = any(
-                        option.get("type") == "array" and option.get("items", {}).get("type") == "string"
-                        for option in domain_options
-                    )
-                    if domains and supports_domains:
-                        arguments["include_domains"] = domains
-                    for name in search_tool.input_schema.get("required", []):
-                        if name not in arguments:
-                            raise RetrievalError("Tavily search requires an unsupported argument")
+                        properties = search_tool.input_schema.get("properties", {})
+                        arguments = {"query": query}
+                        if "search_depth" in properties:
+                            arguments["search_depth"] = "basic"
+                        if "max_results" in properties:
+                            arguments["max_results"] = settings.tavily_max_results
+                        domain_schema = properties.get("include_domains", {})
+                        # Tavily also advertises this optional argument as array-or-null.
+                        domain_options = [domain_schema] + domain_schema.get("anyOf", [])
+                        supports_domains = any(
+                            option.get("type") == "array" and option.get("items", {}).get("type") == "string"
+                            for option in domain_options
+                        )
+                        if domains and supports_domains:
+                            arguments["include_domains"] = domains
+                        for name in search_tool.input_schema.get("required", []):
+                            if name not in arguments:
+                                raise RetrievalError("Tavily search requires an unsupported argument")
 
-                    response = await session.call_tool(search_tool.name, arguments=arguments)
-                    sources = extract_sources(response, settings.tavily_max_results, domains)
-                    return search_tool.name, sources
+                        response = await session.call_tool(search_tool.name, arguments=arguments)
+                        sources = extract_sources(response, settings.tavily_max_results, domains)
+                        return search_tool.name, sources
     except RetrievalError:
         raise
     except TimeoutError:

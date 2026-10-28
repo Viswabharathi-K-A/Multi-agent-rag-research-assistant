@@ -56,6 +56,23 @@ def test_invalid_request_never_starts_graph(scripted, body):
     scripted[1].assert_not_called()
 
 
+def test_metrics_correlate_request_without_logging_query(scripted, caplog):
+    scripted[0].append(("updates", {"supervisor": {
+        "next_agent": "finish", "final_answer": "Private answer"}}))
+    with caplog.at_level("INFO", logger="app.main"):
+        with TestClient(main.app) as client:
+            response = client.post("/chat", json={"query": "Private question"})
+    assert parse_events(response)[-1]["type"] == "done"
+    records = [record.getMessage() for record in caplog.records
+               if record.getMessage().startswith("request_metrics ")]
+    assert len(records) == 1
+    snapshot = json.loads(records[0].removeprefix("request_metrics "))
+    assert snapshot["request_id"] == response.headers["X-Request-ID"]
+    assert snapshot["outcome"] == "response_ready"
+    assert snapshot["server_ttft_seconds"] is None
+    assert "Private" not in records[0]
+
+
 def test_real_graph_streams_worker_generation_and_final_answer(monkeypatch):
     settings = Settings(_env_file=None, research_timeout_seconds=5,
                         supervisor_provider="openai", supervisor_model="fake-supervisor")

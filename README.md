@@ -45,13 +45,17 @@ This query makes paid generation calls. Web research additionally uses Tavily qu
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -m "not live" -q -p no:cacheprovider
-node --check app/static/app.js
+node -e "const html=require('fs').readFileSync('app/static/index.html','utf8'); new (require('vm').Script)(html.match(/<script>([\s\S]*?)<\/script>/)[1]);"
 ```
 
 The latest recorded full offline suite passed **279 tests in 13.18 seconds**;
 verification details are recorded in [architecture.md](docs/architecture.md). Tests use mocked
 model/MCP boundaries and fake embeddings, including real graph execution and
 temporary Chroma integration. Passing them does not establish live model quality.
+
+The frontend is self-contained in `app/static/index.html`, with embedded CSS and
+vanilla JavaScript. The Node command above checks its inline script without
+executing it or calling any APIs.
 
 [Evaluation results](docs/evaluation.md) report two 12-question Research-only
 RAGAS runs. Continuation retrieval improved answer relevance from 0.7171 to 0.8939
@@ -154,6 +158,23 @@ URL, configuration, and test evidence. Deployment and grading access are incompl
 until the actual URL works for the intended user.
 
 ## Costs, status, and limitations
+
+With `LOG_LEVEL=INFO`, each completed or interrupted `/chat` stream emits a
+`request_metrics` JSON log entry. Match its `request_id` to the response's
+`X-Request-ID` header. It records server elapsed time, time to the first worker
+token, model invocation timings, document/web retrieval timings, and provider-reported
+input/output token counts. A direct Supervisor response has no worker-token timing.
+Unknown usage remains null and is counted separately; known token totals are
+partial when any calls lack usage. Unfinished model calls are also counted.
+`generation_seconds` sums completed invocation durations, rather than wall-clock
+request time. SDK retries are internal to an invocation and are not counted as
+separate HTTP requests. Metrics omit prompts, answers, credentials, and error messages.
+
+The approved live answer collector also writes a `measurements` object per JSONL
+row. These measurements do not establish browser latency, cold/warm instance state,
+or dollar cost. Capture client timings separately, correlate deployment logs by
+request ID, and apply dated provider rates to reported usage. Do not run the
+collector's `--run-live` option without approving API costs.
 
 As of this project snapshot, corpus embeddings run locally; generation uses
 OpenAI/Google and web search uses Tavily. RAGAS scoring separately uses an OpenAI

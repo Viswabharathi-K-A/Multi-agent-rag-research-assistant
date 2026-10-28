@@ -7,6 +7,7 @@ from operator import add
 AgentName = Literal["research", "code", "summary"]
 NextNode = Literal["research", "code", "summary", "finish"]
 RetrievalMode = Literal["documents", "web", "both"]
+SourcePolicy = Literal["unrestricted", "documents", "web"]
 
 
 class AgentTask(TypedDict):
@@ -44,6 +45,7 @@ class ResearchState(TypedDict):
     allowed_domains: NotRequired[list[str]]
 
     # Supervisor planning
+    source_policy: NotRequired[SourcePolicy]
     required_agents: NotRequired[list[AgentName]]
     current_task: AgentTask | None
     next_agent: NextNode

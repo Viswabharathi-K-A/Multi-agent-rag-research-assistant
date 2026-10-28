@@ -67,6 +67,7 @@ async def test_saves_evidence_and_keeps_references_out_of_task(collection_case):
     assert await collector.collect_answers(questions[:1], output) == 0
     node.assert_awaited_once_with({
         "user_query": questions[0]["question"],
+        "source_policy": "documents",
         "current_task": {"agent": "research", "instruction": questions[0]["question"],
                          "retrieval_mode": "documents"},
     })
@@ -84,6 +85,8 @@ async def test_saves_evidence_and_keeps_references_out_of_task(collection_case):
     assert row["retrieval_mode"] == "documents"
     assert row["success"] is True and row["error"] is None
     assert row["duration_seconds"] >= 0
+    assert row["measurements"]["outcome"] == "worker_success"
+    assert row["measurements"]["generation_calls"] == 0
     assert datetime.fromisoformat(row["completed_at"]).utcoffset().total_seconds() == 0
 
 

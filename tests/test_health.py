@@ -30,12 +30,16 @@ def test_homepage():
     assert "Multi-Agent Research Assistant" in response.text
 
 
-def test_static_stylesheet():
+def test_static_page_is_self_contained():
     with TestClient(app) as client:
-        response = client.get("/static/style.css")
+        response = client.get("/static/index.html")
 
     assert response.status_code == 200
-    assert "text/css" in response.headers["content-type"]
+    assert "text/html" in response.headers["content-type"]
+    assert "<style>" in response.text
+    assert "<script>" in response.text
+    assert '<script src=' not in response.text
+    assert 'rel="stylesheet"' not in response.text
 
 
 def test_invalid_route():

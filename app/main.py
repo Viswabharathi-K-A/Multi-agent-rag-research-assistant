@@ -1,9 +1,11 @@
 
 import asyncio
+import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
+from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -13,6 +15,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.agents.agents import build_agent_graph
 from app.config import get_settings
+from app.metrics import Measurements, measurement_scope
 from app.schemas import (
     AgentTrace, ChatRequest, Citation, HealthResponse, RoutingDecision, StreamEvent,
 )
@@ -104,72 +107,83 @@ async def health():
 async def chat(request: ChatRequest):
     """Run one graph request and stream generation fragments and graph updates."""
 
+    measurements = Measurements(uuid4().hex)
+
     def event(kind: str, data: dict) -> dict:
         return {"event": kind, "data": StreamEvent(type=kind, data=data).model_dump_json()}
 
     async def events():
-        yield event("start", {"query": request.query})
-        seen_sources = set()
-        final_answer = None
-        try:
-            graph = build_agent_graph()
-            async for mode, payload in graph.astream(
-                {"user_query": request.query, "iteration": 0, "max_iterations": 8},
-                config={"recursion_limit": 20},
-                stream_mode=["messages", "updates"],
-            ):
-                if mode == "messages":
-                    chunk, metadata = payload
-                    agent = metadata.get("langgraph_node")
-                    # Supervisor output contains structured control fields, not answer tokens.
-                    if agent not in ("research", "code", "summary") or not isinstance(chunk, AIMessageChunk):
+        with measurement_scope(measurements):
+            yield event("start", {"query": request.query})
+            seen_sources = set()
+            final_answer = None
+            try:
+                graph = build_agent_graph()
+                async for mode, payload in graph.astream(
+                    {"user_query": request.query, "iteration": 0, "max_iterations": 8},
+                    config={"recursion_limit": 20},
+                    stream_mode=["messages", "updates"],
+                ):
+                    if mode == "messages":
+                        chunk, metadata = payload
+                        agent = metadata.get("langgraph_node")
+                        # Supervisor output contains structured control fields, not answer tokens.
+                        if agent not in ("research", "code", "summary") or not isinstance(chunk, AIMessageChunk):
+                            continue
+                        if isinstance(chunk.content, str):
+                            text = chunk.content
+                        else:
+                            text = "".join(
+                                block["text"] for block in chunk.content
+                                if isinstance(block, dict) and block.get("type") == "text"
+                            )
+                        if text:
+                            if measurements.first_worker_token_seconds is None:
+                                measurements.first_worker_token_seconds = perf_counter() - measurements.started
+                            yield event("token", {"agent": agent, "text": text})
                         continue
-                    if isinstance(chunk.content, str):
-                        text = chunk.content
-                    else:
-                        text = "".join(
-                            block["text"] for block in chunk.content
-                            if isinstance(block, dict) and block.get("type") == "text"
-                        )
-                    if text:
-                        yield event("token", {"agent": agent, "text": text})
-                    continue
 
-                for node, update in payload.items():
-                    for trace in update.get("trace", []):
-                        yield event("trace", AgentTrace(
-                            event=trace["action"], agent=trace["node"],
-                            details={key: value for key, value in trace.items()
-                                     if key not in ("action", "node")},
-                        ).model_dump())
-                        if (trace["action"] in ("llm_started", "delegate", "finish")
-                                and trace.get("provider") and trace.get("model")):
-                            yield event("routing", RoutingDecision(
-                                agent=trace["node"], provider=trace["provider"],
-                                model=trace["model"], reason=trace["reason"],
+                    for node, update in payload.items():
+                        for trace in update.get("trace", []):
+                            yield event("trace", AgentTrace(
+                                event=trace["action"], agent=trace["node"],
+                                details={key: value for key, value in trace.items()
+                                         if key not in ("action", "node")},
                             ).model_dump())
-                    for result in update.get("results", []):
-                        for source in result.get("sources", []):
-                            document = source["url"] if source["source_kind"] == "web" else source["source"]
-                            key = (document, source["source_id"])
-                            if key in seen_sources:
-                                continue
-                            seen_sources.add(key)
-                            metadata = source.get("metadata", {})
-                            yield event("citation", Citation(
-                                source_id=source["source_id"], document=document,
-                                chunk_id=metadata.get("chunk_id"), page=metadata.get("page"),
-                                excerpt=source["content"],
-                            ).model_dump())
-                    if node == "supervisor" and update.get("next_agent") == "finish":
-                        final_answer = update.get("final_answer", "")
-            if not final_answer:
-                yield event("error", {"message": "The workflow did not produce a final answer."})
-            else:
-                yield event("done", {"final_answer": final_answer})
-        except Exception:
-            # Provider exceptions can contain credentials or request content.
-            logger.error("Chat workflow failed")
-            yield event("error", {"message": "The request could not be completed. Please try again."})
+                            if (trace["action"] in ("llm_started", "delegate", "finish")
+                                    and trace.get("provider") and trace.get("model")):
+                                yield event("routing", RoutingDecision(
+                                    agent=trace["node"], provider=trace["provider"],
+                                    model=trace["model"], reason=trace["reason"],
+                                ).model_dump())
+                        for result in update.get("results", []):
+                            for source in result.get("sources", []):
+                                document = source["url"] if source["source_kind"] == "web" else source["source"]
+                                key = (document, source["source_id"])
+                                if key in seen_sources:
+                                    continue
+                                seen_sources.add(key)
+                                metadata = source.get("metadata", {})
+                                yield event("citation", Citation(
+                                    source_id=source["source_id"], document=document,
+                                    chunk_id=metadata.get("chunk_id"), page=metadata.get("page"),
+                                    excerpt=source["content"],
+                                ).model_dump())
+                        if node == "supervisor" and update.get("next_agent") == "finish":
+                            final_answer = update.get("final_answer", "")
+                if not final_answer:
+                    measurements.outcome = "error"
+                    yield event("error", {"message": "The workflow did not produce a final answer."})
+                else:
+                    measurements.outcome = "response_ready"
+                    yield event("done", {"final_answer": final_answer})
+            except Exception:
+                # Provider exceptions can contain credentials or request content.
+                measurements.outcome = "error"
+                logger.error("Chat workflow failed")
+                yield event("error", {"message": "The request could not be completed. Please try again."})
 
-    return EventSourceResponse(events(), headers={"Cache-Control": "no-cache"})
+            finally:
+                logger.info("request_metrics %s", json.dumps(measurements.snapshot()))
+
+    return EventSourceResponse(events(), headers={"Cache-Control": "no-cache", "X-Request-ID": measurements.request_id})

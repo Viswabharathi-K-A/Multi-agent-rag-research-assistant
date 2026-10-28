@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.config import get_settings
+from app.metrics import current_measurements
 
 
 AgentRole = Literal[
@@ -59,7 +60,7 @@ def get_agent_llm(
                 "OPENAI_API_KEY is not configured"
             )
 
-        return ChatOpenAI(
+        model = ChatOpenAI(
             model=model,
             api_key=settings.openai_api_key,
             temperature=0,
@@ -67,13 +68,13 @@ def get_agent_llm(
             timeout=30,
         )
 
-    if provider == "google":
+    elif provider == "google":
         if not settings.google_api_key:
             raise ValueError(
                 "GOOGLE_API_KEY is not configured"
             )
 
-        return ChatGoogleGenerativeAI(
+        model = ChatGoogleGenerativeAI(
             model=model,
             google_api_key=settings.google_api_key,
             temperature=0,
@@ -81,6 +82,11 @@ def get_agent_llm(
             timeout=30,
         )
 
-    raise ValueError(
-        f"Unsupported LLM provider: {provider}"
-    )
+    else:
+        raise ValueError(f"Unsupported LLM provider: {provider}")
+
+    measurements = current_measurements.get()
+    if measurements is not None:
+        model.callbacks = [measurements]
+        model.metadata = {"agent": agent, "provider": provider, "ls_model_name": getattr(settings, f"{agent}_model")}
+    return model

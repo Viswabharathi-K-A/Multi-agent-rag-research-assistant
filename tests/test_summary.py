@@ -51,6 +51,16 @@ async def test_direct_document_summary_retrieves_and_preserves_citations(case):
 
 
 @pytest.mark.asyncio
+async def test_web_only_policy_never_falls_back_to_documents(case):
+    case["state"]["source_policy"] = "web"
+    result = (await summary.summary_node(case["state"]))["results"][0]
+    assert not result["success"]
+    assert "web findings" in result["error"]
+    case["documents"].assert_not_called()
+    case["factory"].assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_existing_findings_skip_retrieval_and_preserve_web_sources(case):
     source = {"source_id": "web-1", "source_kind": "web", "title": "Guide",
               "url": "https://example.com/guide", "content": "Evidence", "metadata": {}}

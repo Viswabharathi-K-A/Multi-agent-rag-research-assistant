@@ -12,10 +12,12 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 from time import perf_counter
+from uuid import uuid4
 
 from app.agents.research import research_node
 from app.config import PROJECT_ROOT
 from app.llm import get_agent_provider_info
+from app.metrics import Measurements, measurement_scope
 
 
 def load_questions(path: Path, ids: list[str] | None = None) -> list[dict]:
@@ -55,15 +57,18 @@ async def collect_answers(questions: list[dict], output_path: Path) -> int:
     with output_path.open("x", encoding="utf-8") as output:
         for question in questions:
             started = perf_counter()
-            update = await research_node({
-                "user_query": question["question"],
-                "current_task": {
-                    "agent": "research", "instruction": question["question"],
-                    "retrieval_mode": "documents",
-                },
-            })
+            measurements = Measurements(uuid4().hex)
+            with measurement_scope(measurements):
+                update = await research_node({
+                    "user_query": question["question"], "source_policy": "documents",
+                    "current_task": {
+                        "agent": "research", "instruction": question["question"],
+                        "retrieval_mode": "documents",
+                    },
+                })
             elapsed = perf_counter() - started
             result = update["results"][0]
+            measurements.outcome = "worker_success" if result["success"] else "worker_failed"
             sources = result.get("sources", [])
             row = {
                 "id": question["id"], "user_input": question["question"],
@@ -75,6 +80,7 @@ async def collect_answers(questions: list[dict], output_path: Path) -> int:
                 "duration_seconds": elapsed,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
                 "trace": update["trace"],
+                "measurements": measurements.snapshot(),
             }
             output.write(json.dumps(row, ensure_ascii=False) + "\n")
             output.flush()

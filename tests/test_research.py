@@ -59,6 +59,18 @@ def research_case(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["documents", "web"])
+async def test_global_policy_overrides_task_channel(research_case, policy):
+    case = research_case
+    case["state"]["source_policy"] = policy
+    case["state"]["current_task"]["retrieval_mode"] = "both"
+    result = (await research.research_node(case["state"]))["results"][0]
+    assert result["success"]
+    assert case["documents"].called == (policy == "documents")
+    assert case["web"].called == (policy == "web")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["documents", "web", "both"])
 async def test_selected_channels_and_evidence_reach_model(research_case, mode):
     case = research_case

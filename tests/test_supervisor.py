@@ -34,6 +34,19 @@ def test_context_defaults():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("persisted", [False, True])
+async def test_source_policy_overrides_conflicting_research_mode(case, persisted):
+    if persisted:
+        case["state"]["source_policy"] = "documents"
+    case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
+        next_agent="research", instruction="Find evidence", reason="Evidence needed",
+        retrieval_mode="web", source_policy="web" if persisted else "documents")
+    output = await supervisor.supervisor_node(case["state"])
+    assert output["source_policy"] == "documents"
+    assert output["current_task"]["retrieval_mode"] == "documents"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("recover", [True, False])
 async def test_premature_finish_reconsidered_once_preserving_requirements(case, recover):
     original = deepcopy(case["state"])

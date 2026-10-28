@@ -22,8 +22,7 @@ Implemented: three specialized workers, an asynchronous LLM supervisor, LangGrap
 | `app/services/tavily_mcp.py` | Discover/invoke Tavily search through Remote MCP and normalize evidence. |
 | `app/main.py` | Initialize cached embeddings during lifespan startup, serve static assets and `/health`, and run the graph through `POST /chat` with SSE. |
 | `app/schemas.py` | Validate chat input and define routing, citation, trace, and stream envelopes. |
-| `app/static/app.js` | Send queries, incrementally parse SSE, and render responses plus per-turn inspection panels. |
-| `app/static/style.css` | Provide responsive layout, response whitespace preservation, and readable citation links with keyboard-focus styling. |
+| `app/static/index.html` | Self-contained HTML page with embedded CSS and vanilla JavaScript: send queries, parse SSE, render Markdown/citations, and show agent outputs, traces, and routing. |
 
 ```mermaid
 flowchart TD
@@ -182,7 +181,7 @@ Citation events preserve source ID, corpus path or web URL, available chunk ID/P
 
 ### Frontend rendering
 
-`app.js` uses POST `fetch()` and a streaming reader. `TextDecoder` handles split UTF-8 characters; a buffer waits for complete LF/CRLF SSE frames, combines data lines, and ignores keepalive comments. An interrupted stream without `done`/`error`, malformed JSON, an HTTP error, or an unexpected content type is shown as a failure. Controls are disabled during a request, duplicate submissions are ignored, and controls are restored in `finally`.
+The inline JavaScript in `index.html` uses POST `fetch()` and a streaming reader. `TextDecoder` handles split UTF-8 characters; a buffer waits for complete LF/CRLF SSE frames, combines data lines, and ignores keepalive comments. An interrupted stream without `done`/`error`, malformed JSON, an HTTP error, or an unexpected content type is shown as a failure. Controls are disabled during a request, duplicate submissions are ignored, and controls are restored in `finally`.
 
 Worker fragments are grouped by agent within a turn and labeled as intermediate output. Repeated calls to the same agent append to that agent's working-output section; the trace/routing panels retain individual call records. `done` creates a separate final-answer section. Inspection panels retain collapsible groups for each visible turn. Failed requests mark partial output as incomplete.
 

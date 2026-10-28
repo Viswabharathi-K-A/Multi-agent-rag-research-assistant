@@ -29,6 +29,23 @@ def case(monkeypatch):
         "llm": llm, "factory": factory, "web": web, "settings": settings}
 
 
+@pytest.mark.asyncio
+async def test_document_policy_rejects_even_hallucinated_web_tool(case):
+    case["state"]["source_policy"] = "documents"
+    case["llm"].ainvoke.side_effect = [
+        AIMessage(content="", tool_calls=[{"name": "search_technical_web",
+                   "args": {"query": "Python"}, "id": "blocked"}]),
+        AIMessage(content="Self-contained code explanation"),
+    ]
+    result = (await code.code_node(case["state"]))["results"][0]
+    assert result["success"]
+    case["web"].assert_not_called()
+    bound = case["factory"].return_value.bind_tools.call_args.args[0]
+    assert [tool.name for tool in bound] == ["inspect_python"]
+    messages = case["llm"].ainvoke.call_args.args[0]
+    assert "document-only" in messages[-2].content
+
+
 def test_python_inspection_does_not_execute_source(tmp_path):
     marker = tmp_path / "must-not-exist"
     source = f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\nclass Cache:\n    async def get(self):\n        return 1\n"

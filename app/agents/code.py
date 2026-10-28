@@ -73,9 +73,12 @@ async def code_node(state: ResearchState) -> dict:
             raise RetrievalError("Code agent received an invalid task")
         instruction = task["instruction"]
         domains = normalize_domains(state.get("allowed_domains") or task.get("allowed_domains"))
+        source_policy = state.get("source_policy", "unrestricted")
         provider, model = get_agent_provider_info("code")
         completed = [result for result in state.get("results", []) if result.get("success") and all(
-            source.get("source_kind") != "web" or url_matches_domains(source["url"], domains)
+            (source.get("source_kind") != "web" or
+             (source_policy != "documents" and url_matches_domains(source["url"], domains)))
+            and (source_policy != "web" or source.get("source_kind") != "document")
             for source in result.get("sources", []))]
         for result in completed:
             for source in result.get("sources", []):
@@ -97,11 +100,14 @@ async def code_node(state: ResearchState) -> dict:
                   "Code and Research share Tavily Remote MCP for distinct tasks", tool_name)
             return {"sources": evidence}
 
-        tools = {"inspect_python": inspect_python, "search_technical_web": search_technical_web}
+        tools = {"inspect_python": inspect_python}
+        if source_policy != "documents":
+            tools["search_technical_web"] = search_technical_web
         messages = [SystemMessage(content=CODE_PROMPT), HumanMessage(content=json.dumps({
             "original_query": state.get("user_query", ""), "instruction": instruction,
             "completed_results": completed,
             "allowed_domains": domains,
+            "source_policy": source_policy,
         }, ensure_ascii=False))]
         # Reuse the existing configurable worker timeout without adding settings.
         async with asyncio.timeout(get_settings().research_timeout_seconds):
@@ -129,7 +135,9 @@ async def code_node(state: ResearchState) -> dict:
                     tool_calls += 1
                     name = call["name"]
                     event("tool_started", f"Requested tool: {name}", "Model-selected code tool", name)
-                    if name not in tools:
+                    if name == "search_technical_web" and source_policy == "documents":
+                        output = {"error": "Web research is disabled by the document-only source policy"}
+                    elif name not in tools:
                         output = {"error": "Unknown code tool"}
                     else:
                         try:

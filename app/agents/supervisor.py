@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.agents.citations import normalize_document_citations, validate_document_citations, validate_web_citations
-from app.agents.state import AgentName, ResearchState, RetrievalMode
+from app.agents.state import AgentName, ResearchState, RetrievalMode, SourcePolicy
 from app.config import get_settings
 from app.services.tavily_mcp import normalize_domains, url_matches_domains
 
@@ -32,6 +32,7 @@ class SupervisorDecision(BaseModel):
     search_query: str = Field(default="", description="Concise keyword query for Research web search, not the full task instruction")
     allowed_domains: list[str] = Field(default_factory=list, description="Source hostname restrictions requested by the user, e.g. docs.python.org for official Python docs; empty when unrestricted")
     required_agents: list[AgentName] = Field(default_factory=list, description="Specialists explicitly requested by the user; empty when none are explicitly requested")
+    source_policy: SourcePolicy = Field(default="unrestricted", description="Global explicit source restriction: documents for corpus-only/no-web/offline requests, web for web-only requests, otherwise unrestricted")
 
 
 SUPERVISOR_PROMPT = """
@@ -53,6 +54,9 @@ Your responsibilities:
 
 Rules:
 - Base decisions on the actual request and evidence.
+- On the first decision, extract the original request's global source_policy.
+  Persisted source_policy is authoritative for every worker, not just Research.
+  Do not interpret Research's default documents mode as a global no-web request.
 - On the first decision, extract explicitly requested specialists into required_agents.
   Do not treat ordinary verbs such as 'summarize', quoted text, or negated requests
   as explicit specialist requests. Persisted required_agents are authoritative.
@@ -78,6 +82,10 @@ Rules:
   because it discusses official documentation. Report missing evidence honestly.
 - Never introduce an unsupplied source URL in a delegated instruction or final
   answer. Keep web URLs distinct from document source_id values.
+- Delegate with search keywords and hostname restrictions, not example URLs,
+  guessed paths, or fragments. Copy a URL only when it already appears in supplied
+  evidence. A worker's prose claiming that another agent ran or searched is not
+  execution evidence; inspect result.agent and tool traces instead.
 
 Final-answer citations:
 - Cite supported claims using exact source_id values from completed_results.sources.
@@ -150,6 +158,8 @@ def build_supervisor_context(state: ResearchState) -> str:
     if "required_agents" in state:
         context["required_agents"] = state["required_agents"]
         context["pending_agents"], context["failed_agents"] = required_agent_status(state)
+    if "source_policy" in state:
+        context["source_policy"] = state["source_policy"]
 
     return json.dumps(context, ensure_ascii=False)
 
@@ -197,8 +207,10 @@ async def supervisor_node(state: ResearchState) -> dict:
     provider = settings.supervisor_provider
     model = settings.supervisor_model
     required_agents = list(dict.fromkeys(state.get("required_agents", decision.required_agents)))
+    source_policy = state.get("source_policy", decision.source_policy)
     domains = normalize_domains(state.get("allowed_domains") or decision.allowed_domains)
-    planning_state = {**state, "required_agents": required_agents, "allowed_domains": domains}
+    planning_state = {**state, "required_agents": required_agents, "allowed_domains": domains,
+                      "source_policy": source_policy}
     pending, failed = required_agent_status(planning_state)
     reconsideration_trace = []
     if decision.next_agent == "finish" and pending:
@@ -214,6 +226,9 @@ async def supervisor_node(state: ResearchState) -> dict:
             HumanMessage(content="Your finish decision left pending requested specialists. "
                          "Reconsider once and choose the appropriate next worker, or explain why work cannot continue."),
         ])
+
+    if decision.next_agent == "research" and source_policy != "unrestricted":
+        decision.retrieval_mode = source_policy
 
     trace_event = {
         "node": "supervisor",
@@ -238,6 +253,7 @@ async def supervisor_node(state: ResearchState) -> dict:
         "iteration": iteration + 1,
         "next_agent": decision.next_agent,
         "required_agents": required_agents,
+        "source_policy": source_policy,
         "trace": reconsideration_trace + [trace_event],
     }
     if domains:
