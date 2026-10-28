@@ -94,6 +94,58 @@ async def test_all_workers_run_and_preserve_evidence_and_trace(case):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("recover", [True, False])
+async def test_graph_handles_skipped_explicit_summary(case, recover):
+    def decide(messages):
+        context = json.loads(messages[1].content)
+        completed = {result["agent"] for result in context["completed_results"]}
+        if not completed:
+            return supervisor.SupervisorDecision(
+                next_agent="research", instruction="Find Raft evidence", reason="Evidence needed",
+                required_agents=["research", "code", "summary"])
+        if "code" not in completed:
+            return supervisor.SupervisorDecision(
+                next_agent="code", instruction="Explain implementation", reason="Code needed")
+        if len(messages) == 3 and recover:
+            assert context["pending_agents"] == ["summary"]
+            return supervisor.SupervisorDecision(
+                next_agent="summary", instruction="Synthesize findings", reason="Explicitly requested")
+        return supervisor.SupervisorDecision(
+            next_agent="finish", instruction="", reason="Done",
+            final_answer="Findings [raft.pdf:p6:c1]")
+
+    case["state"]["user_query"] = "Use Research, Code, and Summary agents for Raft"
+    case["structured"].ainvoke.side_effect = decide
+    output = await build_agent_graph().ainvoke(case["state"])
+    assert [result["agent"] for result in output["results"]] == (
+        ["research", "code", "summary"] if recover else ["research", "code"])
+    assert output["required_agents"] == ["research", "code", "summary"]
+    assert output["next_agent"] == "finish"
+    assert case["structured"].ainvoke.await_count == (5 if recover else 4)
+    assert sum(event["action"] == "completion_reconsideration" for event in output["trace"]) == 1
+    assert ("incomplete" in output["final_answer"]) == (not recover)
+    case["web"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_required_worker_failure_cannot_be_reported_as_success(case):
+    case["models"]["summary"].ainvoke.side_effect = RuntimeError("Private error")
+    case["structured"].ainvoke.side_effect = [
+        supervisor.SupervisorDecision(next_agent="summary", instruction="Summarize Raft",
+                                      reason="Requested", required_agents=["summary"]),
+        supervisor.SupervisorDecision(next_agent="finish", instruction="", reason="Done",
+                                      final_answer="All requested work succeeded"),
+    ]
+    output = await build_agent_graph().ainvoke(case["state"])
+    assert output["final_answer"] == "Requested work could not be completed: summary failed."
+    assert output["results"][0]["success"] is False
+    assert case["structured"].ainvoke.await_count == 2
+    context = json.loads(case["structured"].ainvoke.call_args.args[0][1].content)
+    assert context["pending_agents"] == []
+    assert context["failed_agents"] == ["summary"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("agent", ["research", "code", "summary"])
 async def test_worker_model_failure_returns_to_supervisor_and_finishes(case, agent):
     case["models"][agent].ainvoke.side_effect = RuntimeError("Private provider error")

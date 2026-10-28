@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.agents.citations import normalize_document_citations, validate_document_citations, validate_web_citations
-from app.agents.state import ResearchState, RetrievalMode
+from app.agents.state import AgentName, ResearchState, RetrievalMode
 from app.config import get_settings
 from app.services.tavily_mcp import normalize_domains, url_matches_domains
 
@@ -31,6 +31,7 @@ class SupervisorDecision(BaseModel):
     )
     search_query: str = Field(default="", description="Concise keyword query for Research web search, not the full task instruction")
     allowed_domains: list[str] = Field(default_factory=list, description="Source hostname restrictions requested by the user, e.g. docs.python.org for official Python docs; empty when unrestricted")
+    required_agents: list[AgentName] = Field(default_factory=list, description="Specialists explicitly requested by the user; empty when none are explicitly requested")
 
 
 SUPERVISOR_PROMPT = """
@@ -52,6 +53,11 @@ Your responsibilities:
 
 Rules:
 - Base decisions on the actual request and evidence.
+- On the first decision, extract explicitly requested specialists into required_agents.
+  Do not treat ordinary verbs such as 'summarize', quoted text, or negated requests
+  as explicit specialist requests. Persisted required_agents are authoritative.
+- Before finishing, examine pending_agents and failed_agents. Delegate pending
+  requested specialists as appropriate; report failed requested work honestly.
 - Never invent research results or citations.
 - If a worker fails, consider an alternative.
 - Failed results contain failure details, not usable findings or sources. Use
@@ -98,6 +104,15 @@ Research source selection:
 """
 
 
+def required_agent_status(state: ResearchState) -> tuple[list[AgentName], list[AgentName]]:
+    """Derive unattempted and unsuccessful requirements from existing results."""
+    attempted = {result.get("agent") for result in state.get("results", [])}
+    successful = {result.get("agent") for result in state.get("results", []) if result.get("success")}
+    required = state.get("required_agents", [])
+    return ([agent for agent in required if agent not in attempted],
+            [agent for agent in required if agent in attempted and agent not in successful])
+
+
 def build_supervisor_context(state: ResearchState) -> str:
     """Expose successful evidence and failed-task details without changing state."""
 
@@ -124,6 +139,9 @@ def build_supervisor_context(state: ResearchState) -> str:
     }
     if state.get("allowed_domains"):
         context["allowed_domains"] = state["allowed_domains"]
+    if "required_agents" in state:
+        context["required_agents"] = state["required_agents"]
+        context["pending_agents"], context["failed_agents"] = required_agent_status(state)
 
     return json.dumps(context, ensure_ascii=False)
 
@@ -170,6 +188,24 @@ async def supervisor_node(state: ResearchState) -> dict:
 
     provider = settings.supervisor_provider
     model = settings.supervisor_model
+    required_agents = list(dict.fromkeys(state.get("required_agents", decision.required_agents)))
+    domains = normalize_domains(state.get("allowed_domains") or decision.allowed_domains)
+    planning_state = {**state, "required_agents": required_agents, "allowed_domains": domains}
+    pending, failed = required_agent_status(planning_state)
+    reconsideration_trace = []
+    if decision.next_agent == "finish" and pending:
+        reconsideration_trace.append({
+            "node": "supervisor", "action": "completion_reconsideration",
+            "detail": f"Requested specialists have not run: {', '.join(pending)}",
+            "provider": provider, "model": model,
+            "reason": "One additional decision before accepting premature completion",
+        })
+        decision = await structured_llm.ainvoke([
+            SystemMessage(content=SUPERVISOR_PROMPT),
+            HumanMessage(content=build_supervisor_context(planning_state)),
+            HumanMessage(content="Your finish decision left pending requested specialists. "
+                         "Reconsider once and choose the appropriate next worker, or explain why work cannot continue."),
+        ])
 
     trace_event = {
         "node": "supervisor",
@@ -193,9 +229,9 @@ async def supervisor_node(state: ResearchState) -> dict:
     update = {
         "iteration": iteration + 1,
         "next_agent": decision.next_agent,
-        "trace": [trace_event],
+        "required_agents": required_agents,
+        "trace": reconsideration_trace + [trace_event],
     }
-    domains = normalize_domains(state.get("allowed_domains") or decision.allowed_domains)
     if domains:
         update["allowed_domains"] = domains
         trace_event["detail"] += f" (allowed_domains={domains})"
@@ -204,6 +240,14 @@ async def supervisor_node(state: ResearchState) -> dict:
 
     if decision.next_agent == "finish":
         update["current_task"] = None
+        if pending:
+            update["final_answer"] = (
+                "The requested workflow is incomplete. Specialists not run: "
+                + ", ".join(pending) + "."
+            )
+            if failed:
+                update["final_answer"] += " Requested specialists that failed: " + ", ".join(failed) + "."
+            return update
         sources = []
         for result in state.get("results", []):
             if result.get("success"):
@@ -226,6 +270,9 @@ async def supervisor_node(state: ResearchState) -> dict:
                 "model": None,
                 "reason": "Document IDs and web URLs must match evidence from successful workers",
             })
+        if failed:
+            # Replace completion claims with a factual status; worker results remain available.
+            update["final_answer"] = "Requested work could not be completed: " + ", ".join(failed) + " failed."
     else:
         update["current_task"] = {
             "agent": decision.next_agent,

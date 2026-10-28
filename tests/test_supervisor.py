@@ -34,6 +34,78 @@ def test_context_defaults():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("recover", [True, False])
+async def test_premature_finish_reconsidered_once_preserving_requirements(case, recover):
+    original = deepcopy(case["state"])
+    case["structured"].ainvoke.side_effect = [
+        supervisor.SupervisorDecision(next_agent="finish", instruction="", reason="Done",
+                                      required_agents=["summary"], allowed_domains=["example.com"]),
+        supervisor.SupervisorDecision(next_agent="summary" if recover else "finish",
+                                      instruction="Synthesize findings", reason="Reconsidered",
+                                      final_answer="Everything completed", required_agents=["code"],
+                                      allowed_domains=["other.com"]),
+    ]
+    output = await supervisor.supervisor_node(case["state"])
+    assert output["required_agents"] == ["summary"]
+    assert output["allowed_domains"] == ["example.com"]
+    assert output["next_agent"] == ("summary" if recover else "finish")
+    assert output["iteration"] == 3
+    assert output["trace"][0]["action"] == "completion_reconsideration"
+    context = json.loads(case["structured"].ainvoke.call_args.args[0][1].content)
+    assert context["pending_agents"] == ["summary"]
+    assert context["failed_agents"] == []
+    assert case["structured"].ainvoke.await_count == 2
+    assert case["state"] == original
+    if not recover:
+        assert "incomplete" in output["final_answer"]
+        assert "summary" in output["final_answer"]
+        assert "Everything completed" not in output["final_answer"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("success", [True, False])
+async def test_attempted_requirement_finishes_without_extra_call(case, success):
+    case["state"].update(required_agents=["summary"], results=[{
+        "agent": "summary", "success": success, "instruction": "Summarize",
+        "content": "Findings" if success else "", "error": None if success else "Failed",
+    }])
+    case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
+        next_agent="finish", instruction="", reason="Done", final_answer="Completed successfully")
+    output = await supervisor.supervisor_node(case["state"])
+    assert output["required_agents"] == ["summary"]
+    assert ("summary failed" in output["final_answer"]) == (not success)
+    case["structured"].ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_persisted_empty_requirements_are_not_replaced(case):
+    case["state"]["required_agents"] = []
+    case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
+        next_agent="finish", instruction="", reason="Done", required_agents=["summary"])
+    output = await supervisor.supervisor_node(case["state"])
+    assert output["required_agents"] == []
+    case["structured"].ainvoke.assert_awaited_once()
+
+
+def test_successful_retry_satisfies_requirement():
+    state = {"required_agents": ["summary", "code", "research"], "results": [
+        {"agent": "summary", "success": False}, {"agent": "summary", "success": True},
+        {"agent": "code", "success": False},
+    ]}
+    assert supervisor.required_agent_status(state) == (["research"], ["code"])
+
+
+@pytest.mark.asyncio
+async def test_iteration_limit_prevents_reconsideration(case):
+    case["state"].update(iteration=8, required_agents=["summary"])
+    output = await supervisor.supervisor_node(case["state"])
+    assert output["next_agent"] == "finish"
+    assert "iteration limit" in output["final_answer"]
+    case["factory"].assert_not_called()
+    case["structured"].ainvoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_worker_failure_details_reach_model_without_failed_evidence(case):
     result = {"agent": "research", "instruction": "Find election evidence",
               "content": "Rejected findings", "success": False, "error": "Web retrieval failed",

@@ -44,6 +44,7 @@ class ResearchState(TypedDict):
     allowed_domains: NotRequired[list[str]]
 
     # Supervisor planning
+    required_agents: NotRequired[list[AgentName]]
     current_task: AgentTask | None
     next_agent: NextNode
 
