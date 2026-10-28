@@ -46,3 +46,25 @@ def validate_document_citations(content: str, sources: list[dict]) -> None:
             raise ValueError("Document citations must use exact supplied IDs in separate brackets")
     if allowed_ids and not found:
         raise ValueError("Document-backed output omitted exact source citations")
+
+
+def validate_web_citations(content: str, sources: list[dict], *, code: bool = False) -> None:
+    """Check prose URLs against web evidence, without judging claim support.
+
+    Code examples may contain arbitrary endpoint URLs, so Code can exclude
+    fenced code and inline code from this check. Source URL fragments must also
+    match exactly; a plausible documentation URL is not retrieved evidence.
+    """
+    if code:
+        content = re.sub(r"```[\s\S]*?```|`[^`\n]*`", "", content)
+    allowed_urls = {source["url"] for source in sources if source.get("source_kind") == "web"}
+    found = False
+    for match in re.finditer(r"https?://[^\s<>\[\]\"`]+", content, flags=re.IGNORECASE):
+        url = match.group(0)
+        if url not in allowed_urls:
+            url = url.rstrip(".,;:!?)")
+        if url not in allowed_urls:
+            raise ValueError("Web citations must use exact supplied URLs")
+        found = True
+    if allowed_urls and not found:
+        raise ValueError("Web-backed output omitted exact source citations")

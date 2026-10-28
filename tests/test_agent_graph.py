@@ -128,3 +128,52 @@ async def test_worker_model_failure_returns_to_supervisor_and_finishes(case, age
     assert actions[0] == ("supervisor", "delegate")
     assert actions[-1] == ("supervisor", "finish")
     case["web"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invented_final_url", [False, True])
+async def test_web_workflow_preserves_domains_and_bounds_citation_repairs(case, invented_final_url):
+    url = "https://example.com/reference"
+    case["web"].side_effect = None
+    case["web"].return_value = ("tavily_search", [{
+        "source_id": "web-1", "url": url, "title": "Reference", "content": "Evidence", "metadata": {},
+    }])
+    case["models"]["research"].ainvoke.side_effect = [
+        AIMessage(content="Missing citations"), AIMessage(content=f"Research {url}"),
+    ]
+    case["models"]["code"].ainvoke.return_value = AIMessage(content=f"Code findings {url}")
+    case["models"]["summary"].ainvoke.side_effect = [
+        AIMessage(content="Missing citations"), AIMessage(content=f"Summary {url}"),
+    ]
+
+    def decide(messages):
+        context = json.loads(messages[1].content)
+        completed = context["completed_results"]
+        if completed:
+            assert context["allowed_domains"] == ["example.com"]
+            assert all(result["success"] for result in completed)
+        if len(completed) < 3:
+            return supervisor.SupervisorDecision(
+                next_agent=("research", "code", "summary")[len(completed)],
+                instruction="Explain the official reference", reason="Requested specialist work",
+                retrieval_mode="web", search_query="concise reference query", allowed_domains=["example.com"])
+        return supervisor.SupervisorDecision(
+            next_agent="finish", instruction="", reason="All specialists completed",
+            final_answer="Final https://example.com/invented" if invented_final_url else f"Final {url}")
+
+    case["structured"].ainvoke.side_effect = decide
+    output = await build_agent_graph().ainvoke(case["state"])
+
+    assert output["allowed_domains"] == ["example.com"]
+    assert all(result["success"] for result in output["results"])
+    case["web"].assert_awaited_once_with("concise reference query", allowed_domains=["example.com"])
+    case["documents"].assert_not_called()
+    assert case["models"]["research"].ainvoke.await_count == 2
+    assert case["models"]["summary"].ainvoke.await_count == 2
+    assert case["models"]["code"].ainvoke.await_count == 1
+    assert sum(event["action"] == "citation_repair_started" for event in output["trace"]) == 2
+    if invented_final_url:
+        assert output["trace"][-1]["action"] == "citation_validation_failed"
+        assert "valid source citations" in output["final_answer"]
+    else:
+        assert output["final_answer"] == f"Final {url}"

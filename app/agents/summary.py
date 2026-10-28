@@ -6,7 +6,7 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
 
-from app.agents.citations import normalize_document_citations, validate_document_citations
+from app.agents.citations import normalize_document_citations, validate_document_citations, validate_web_citations
 from app.agents.state import AgentResult, ResearchState, TraceEvent
 from app.config import get_settings
 from app.llm import get_agent_llm, get_agent_provider_info
@@ -77,22 +77,28 @@ async def summary_node(state: ResearchState) -> dict:
                 "original_query": state.get("user_query", ""), "instruction": instruction,
                 "completed_results": completed, "sources": sources,
             }, ensure_ascii=False))]
-            event("llm_started", "Condense supplied findings and evidence",
-                  "Summary uses its configured provider for cost-conscious condensation of supplied findings and evidence")
-            response = await get_agent_llm("summary").ainvoke(messages)
-            content = StrOutputParser().invoke(response).strip()
-            if not content:
-                raise RetrievalError("Summary model returned no text")
-            content = normalize_document_citations(content, sources)
-            try:
-                validate_document_citations(content, sources)
-            except ValueError as exc:
-                raise RetrievalError(str(exc)) from None
-            if sources and not any(
-                (source["url"] if source["source_kind"] == "web" else f"[{source['source_id']}]") in content
-                for source in sources
-            ):
-                raise RetrievalError("Summary omitted supplied citations")
+            llm = get_agent_llm("summary")
+            for attempt in range(2):
+                event("llm_started", "Condense supplied findings and evidence",
+                      "Summary uses its configured provider for cost-conscious condensation of supplied findings and evidence"
+                      if attempt == 0 else "One citation-only repair using the same evidence; no new retrieval")
+                response = await llm.ainvoke(messages)
+                content = StrOutputParser().invoke(response).strip()
+                if not content:
+                    raise RetrievalError("Summary model returned no text")
+                content = normalize_document_citations(content, sources)
+                try:
+                    validate_document_citations(content, sources)
+                    validate_web_citations(content, sources)
+                    break
+                except ValueError as exc:
+                    if attempt == 1:
+                        raise RetrievalError(str(exc)) from None
+                    event("citation_repair_started", str(exc), "Repair source references once, without changing evidence")
+                    messages = messages + [HumanMessage(content=json.dumps({
+                        "rejected_answer": content, "citation_error": str(exc),
+                        "instruction": "Rewrite using only supplied findings and evidence. Preserve exact document IDs and web URLs alongside claims. Remove unsupported claims; do not invent citations or new facts.",
+                    }, ensure_ascii=False))]
         references = []
         for source in sources:
             if source["source_kind"] == "web":

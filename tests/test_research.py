@@ -279,7 +279,56 @@ async def test_invalid_document_citations_fail_before_source_appendix(research_c
     assert result["sources"][0]["content"] == research_case["chunk"].page_content
     assert output["trace"][-1]["action"] == "research_failed"
     assert not any(event["action"] == "research_completed" for event in output["trace"])
-    research_case["model"].ainvoke.assert_awaited_once()
+    assert research_case["model"].ainvoke.await_count == 2
+    research_case["documents"].assert_called_once()
+    research_case["web"].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_web_query_and_domain_restrictions_are_separate_from_instruction(research_case):
+    case = research_case
+    case["state"]["current_task"].update(retrieval_mode="web", search_query="concise search keywords",
+                                         allowed_domains=["example.com"])
+    result = (await research.research_node(case["state"]))["results"][0]
+    assert result["success"]
+    case["web"].assert_awaited_once_with("concise search keywords", allowed_domains=["example.com"])
+    assert case["prompts"][0]["research_instruction"] == "Find evidence"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["documents", "web", "both"])
+async def test_citation_repair_reuses_evidence_and_makes_only_one_extra_call(research_case, mode):
+    case = research_case
+    case["state"]["current_task"]["retrieval_mode"] = mode
+    good = {"documents": "Finding [raft.pdf:p7:c1]",
+            "web": "Finding https://example.com/guide",
+            "both": "Finding [raft.pdf:p7:c1] https://example.com/guide"}[mode]
+    case["model"].ainvoke.side_effect = [AIMessage(content="Finding without citations"), AIMessage(content=good)]
+
+    output = await research.research_node(case["state"])
+
+    assert output["results"][0]["success"]
+    assert output["results"][0]["content"].startswith(good)
+    assert case["model"].ainvoke.await_count == 2
+    case["factory"].assert_called_once_with("research")
+    assert case["documents"].call_count == (mode in ("documents", "both"))
+    assert case["web"].await_count == (mode in ("web", "both"))
+    repair_prompt = case["model"].ainvoke.call_args.args[0].to_messages()
+    assert json.loads(repair_prompt[-1].content)["rejected_answer"] == "Finding without citations"
+    assert len([event for event in output["trace"] if event["action"] == "citation_repair_started"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_second_invalid_web_answer_fails_without_another_search(research_case):
+    case = research_case
+    case["state"]["current_task"]["retrieval_mode"] = "web"
+    case["model"].ainvoke.side_effect = [AIMessage(content="Wrong https://example.com/other")] * 2
+    result = (await research.research_node(case["state"]))["results"][0]
+    assert not result["success"] and result["content"] == ""
+    assert "exact supplied URLs" in result["error"]
+    assert result["sources"]
+    assert case["model"].ainvoke.await_count == 2
+    case["web"].assert_awaited_once()
 
 
 @pytest.mark.asyncio

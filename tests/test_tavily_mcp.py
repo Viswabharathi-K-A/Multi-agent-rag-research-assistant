@@ -287,3 +287,46 @@ def test_unrelated_log_records_remain_and_filters_are_attached():
     assert mcp.redact_log(record)
     for name in ("httpx2", "mcp.client.streamable_http"):
         assert mcp.redact_log in logging.getLogger(name).filters
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("advertised", [True, False])
+async def test_domain_restriction_is_enforced_with_or_without_server_argument(case, advertised):
+    if advertised:
+        case["tool"].input_schema["properties"]["include_domains"] = {
+            "type": "array", "items": {"type": "string"},
+        }
+    case["session"].call_tool.return_value = types.CallToolResult(content=[], structured_content={"results": [
+        {"url": "https://third-party.org/article", "content": "Not official"},
+        {"url": "https://docs.example.com/reference", "content": "Allowed evidence"},
+    ]})
+
+    _, sources = await mcp.search_web("Query", case["settings"], allowed_domains=["EXAMPLE.COM."])
+
+    assert [source["url"] for source in sources] == ["https://docs.example.com/reference"]
+    arguments = case["session"].call_tool.call_args.kwargs["arguments"]
+    assert arguments.get("include_domains") == (["example.com"] if advertised else None)
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.com.evil.org/ref", "https://notexample.com/ref",
+    "https://example.com@evil.org/ref", "https://evil.org/ref?host=example.com",
+])
+def test_domain_filter_rejects_lookalike_hosts(url):
+    assert not mcp.url_matches_domains(url, ["example.com"])
+
+
+@pytest.mark.asyncio
+async def test_disallowed_results_fail_without_broadening_or_retrying(case):
+    with pytest.raises(mcp.RetrievalError, match="allowed domains"):
+        await mcp.search_web("Query", case["settings"], allowed_domains=["python.org"])
+    case["session"].call_tool.assert_awaited_once()
+    assert case["events"][-2:] == ["session_exit", "transport_exit"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("domain", ["https://python.org", "python.org/path", "", "python..org", "python.-org"])
+async def test_invalid_domains_fail_before_connection(case, domain):
+    with pytest.raises(mcp.RetrievalError, match="hostnames"):
+        await mcp.search_web("Query", case["settings"], allowed_domains=[domain])
+    case["transport"].assert_not_called()

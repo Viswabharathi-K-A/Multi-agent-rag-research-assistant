@@ -8,10 +8,11 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.tools import tool
 
+from app.agents.citations import normalize_document_citations, validate_document_citations, validate_web_citations
 from app.agents.state import AgentResult, ResearchState, TraceEvent
 from app.config import get_settings
 from app.llm import get_agent_llm, get_agent_provider_info
-from app.services.tavily_mcp import RetrievalError, search_web
+from app.services.tavily_mcp import RetrievalError, normalize_domains, search_web, url_matches_domains
 
 
 CODE_PROMPT = """You are the code specialist. Analyze supplied code or generate
@@ -70,8 +71,11 @@ async def code_node(state: ResearchState) -> dict:
         if not task or task.get("agent") != "code" or not task.get("instruction", "").strip():
             raise RetrievalError("Code agent received an invalid task")
         instruction = task["instruction"]
+        domains = normalize_domains(state.get("allowed_domains") or task.get("allowed_domains"))
         provider, model = get_agent_provider_info("code")
-        completed = [result for result in state.get("results", []) if result.get("success")]
+        completed = [result for result in state.get("results", []) if result.get("success") and all(
+            source.get("source_kind") != "web" or url_matches_domains(source["url"], domains)
+            for source in result.get("sources", []))]
         for result in completed:
             for source in result.get("sources", []):
                 if source not in sources:
@@ -80,7 +84,10 @@ async def code_node(state: ResearchState) -> dict:
         @tool
         async def search_technical_web(query: str) -> dict:
             """Find external programming references via Tavily Remote MCP when web use is permitted."""
-            tool_name, found = await search_web(query)
+            if domains:
+                tool_name, found = await search_web(query, allowed_domains=domains)
+            else:
+                tool_name, found = await search_web(query)
             evidence = [{**source, "source_kind": "web"} for source in found]
             for source in evidence:
                 if source not in sources:
@@ -93,6 +100,7 @@ async def code_node(state: ResearchState) -> dict:
         messages = [SystemMessage(content=CODE_PROMPT), HumanMessage(content=json.dumps({
             "original_query": state.get("user_query", ""), "instruction": instruction,
             "completed_results": completed,
+            "allowed_domains": domains,
         }, ensure_ascii=False))]
         # Reuse the existing configurable worker timeout without adding settings.
         async with asyncio.timeout(get_settings().research_timeout_seconds):
@@ -107,6 +115,12 @@ async def code_node(state: ResearchState) -> dict:
                     content = StrOutputParser().invoke(response).strip()
                     if not content:
                         raise RetrievalError("Code model returned no text")
+                    content = normalize_document_citations(content, sources)
+                    try:
+                        validate_document_citations(content, sources)
+                        validate_web_citations(content, sources, code=True)
+                    except ValueError as exc:
+                        raise RetrievalError(str(exc)) from None
                     break
                 if turn == 9 or tool_calls + len(response.tool_calls) > 10:
                     raise RetrievalError("Code agent tool limit reached")

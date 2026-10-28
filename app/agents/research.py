@@ -4,10 +4,12 @@ import asyncio
 import json
 
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import HumanMessage
+from langchain_core.prompt_values import ChatPromptValue
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
 
-from app.agents.citations import normalize_document_citations, validate_document_citations
+from app.agents.citations import normalize_document_citations, validate_document_citations, validate_web_citations
 from app.agents.state import AgentResult, ResearchState, TraceEvent
 from app.config import get_settings
 from app.llm import get_agent_llm, get_agent_provider_info
@@ -55,6 +57,8 @@ async def research_node(state: ResearchState) -> dict:
             raise RetrievalError("Research agent received an invalid task")
         instruction = task["instruction"]
         retrieval_mode = task.get("retrieval_mode", "documents")
+        search_query = task.get("search_query", "").strip() or instruction
+        allowed_domains = state.get("allowed_domains") or task.get("allowed_domains")
         if retrieval_mode not in ("documents", "web", "both"):
             raise RetrievalError("Research task has an invalid retrieval mode")
         settings = get_settings()
@@ -86,7 +90,10 @@ async def research_node(state: ResearchState) -> dict:
                     event("retrieval_completed", f"Retrieved {len(chunks)} document chunks",
                           "Preserve paper titles, corpus paths, PDF pages and chunk IDs", "chroma_retrieval")
                 if retrieval_mode in ("web", "both"):
-                    tool, web_sources = await search_web(instruction)
+                    if allowed_domains:
+                        tool, web_sources = await search_web(search_query, allowed_domains=allowed_domains)
+                    else:
+                        tool, web_sources = await search_web(search_query)
                     sources.extend({**source, "source_kind": "web"} for source in web_sources)
                     event("retrieval_completed", f"Retrieved {len(web_sources)} web sources",
                           "Use Tavily Remote MCP for the selected web evidence channel", tool)
@@ -95,11 +102,30 @@ async def research_node(state: ResearchState) -> dict:
             return {"research_context": json.dumps({**request, "sources": sources}, ensure_ascii=False)}
 
         async def generate_findings(prompt):
-            """Create and invoke the model only after evidence is available."""
-            event("llm_started", "Synthesize supplied document/web evidence",
-                  "Research uses its configured provider for cost-conscious generation grounded in retrieved evidence")
+            """Generate once; repair citations at most once without retrieving again."""
             async with asyncio.timeout(settings.research_timeout_seconds):
-                return await get_agent_llm("research").ainvoke(prompt)
+                llm = get_agent_llm("research")
+                for attempt in range(2):
+                    event("llm_started", "Synthesize supplied document/web evidence",
+                          "Research uses its configured provider for cost-conscious generation grounded in retrieved evidence" if attempt == 0
+                          else "One citation-only repair using the same evidence; no new search")
+                    response = await llm.ainvoke(prompt)
+                    content = StrOutputParser().invoke(response).strip()
+                    if not content:
+                        raise RetrievalError("Research model returned no text")
+                    content = normalize_document_citations(content, sources)
+                    try:
+                        validate_document_citations(content, sources)
+                        validate_web_citations(content, sources)
+                        return content
+                    except ValueError as exc:
+                        if attempt == 1:
+                            raise RetrievalError(str(exc)) from None
+                        event("citation_repair_started", str(exc), "Repair source references once, without changing evidence")
+                        prompt = ChatPromptValue(messages=prompt.to_messages() + [HumanMessage(content=json.dumps({
+                            "rejected_answer": content, "citation_error": str(exc),
+                            "instruction": "Rewrite using only the supplied evidence. Correct exact document IDs and web URLs, one citation per bracket pair. Remove unsupported claims; do not invent citations or new facts.",
+                        }, ensure_ascii=False))])
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", RESEARCH_PROMPT),
@@ -116,13 +142,6 @@ async def research_node(state: ResearchState) -> dict:
             "research_instruction": instruction,
             "retrieval_mode": retrieval_mode,
         })).strip()
-        if not content:
-            raise RetrievalError("Research model returned no text")
-        content = normalize_document_citations(content, sources)
-        try:
-            validate_document_citations(content, sources)
-        except ValueError as exc:
-            raise RetrievalError(str(exc)) from None
 
         references = []
         for source in sources:

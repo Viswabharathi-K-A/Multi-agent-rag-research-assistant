@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from app.agents.citations import normalize_document_citations, validate_document_citations
+from app.agents.citations import normalize_document_citations, validate_document_citations, validate_web_citations
 
 
 @pytest.fixture
@@ -142,3 +142,42 @@ def test_normalization_does_not_accept_groups_without_document_evidence(sources)
     assert normalize_document_citations(content, sources) == content
     with pytest.raises(ValueError, match="exact supplied IDs"):
         validate_document_citations(content, sources)
+
+
+@pytest.mark.parametrize("content", [
+    "Finding [https://example.com/ref]",
+    "Finding https://example.com/ref.",
+    "Finding [Reference](https://example.com/ref)",
+])
+def test_web_citations_accept_only_supplied_urls(sources, content):
+    assert validate_web_citations(content, sources) is None
+
+
+@pytest.mark.parametrize("content", [
+    "Finding [https://example.com/not-retrieved]",
+    "Finding https://example.com/ref#invented-section",
+    "Valid https://example.com/ref and invalid https://example.com/other",
+    "Finding [https://example.com/ref?invented=1]",
+])
+def test_web_citations_reject_unsupplied_urls_even_with_valid_reference(sources, content):
+    with pytest.raises(ValueError, match="exact supplied URLs"):
+        validate_web_citations(content, sources)
+
+
+def test_web_evidence_requires_inline_url_before_appendix(sources):
+    with pytest.raises(ValueError, match="omitted exact source citations"):
+        validate_web_citations("Finding [web-1]", sources)
+
+
+def test_code_example_urls_are_not_treated_as_evidence():
+    text = 'Example:\n```python\nendpoint = "https://example.com/api"\n```\nUse `https://example.com/other` as a placeholder.'
+    assert validate_web_citations(text, [], code=True) is None
+    with pytest.raises(ValueError, match="exact supplied URLs"):
+        validate_web_citations(text, [])
+    with pytest.raises(ValueError, match="exact supplied URLs"):
+        validate_web_citations(text + " Cite https://example.com/unretrieved", [], code=True)
+
+
+def test_url_in_code_does_not_satisfy_prose_citation_requirement(sources):
+    with pytest.raises(ValueError, match="omitted exact source citations"):
+        validate_web_citations('```python\nurl = "https://example.com/ref"\n```', sources, code=True)

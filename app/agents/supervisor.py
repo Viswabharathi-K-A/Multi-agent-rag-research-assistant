@@ -5,9 +5,10 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from app.agents.citations import normalize_document_citations, validate_document_citations
+from app.agents.citations import normalize_document_citations, validate_document_citations, validate_web_citations
 from app.agents.state import ResearchState, RetrievalMode
 from app.config import get_settings
+from app.services.tavily_mcp import normalize_domains, url_matches_domains
 
 
 class SupervisorDecision(BaseModel):
@@ -28,6 +29,8 @@ class SupervisorDecision(BaseModel):
         default="",
         description="Answer if the workflow is complete"
     )
+    search_query: str = Field(default="", description="Concise keyword query for Research web search, not the full task instruction")
+    allowed_domains: list[str] = Field(default_factory=list, description="Source hostname restrictions requested by the user, e.g. docs.python.org for official Python docs; empty when unrestricted")
 
 
 SUPERVISOR_PROMPT = """
@@ -56,6 +59,11 @@ Rules:
   evidence answers the request, delegate appropriate work or explain the failure.
 - If the task is complete, select "finish".
 - When finishing, provide a grounded final answer.
+- Source restrictions in allowed_domains apply to all web evidence and cannot
+  be broadened on failure. A third-party source is not an official source merely
+  because it discusses official documentation. Report missing evidence honestly.
+- Never introduce an unsupplied source URL in a delegated instruction or final
+  answer. Keep web URLs distinct from document source_id values.
 
 Final-answer citations:
 - Cite supported claims using exact source_id values from completed_results.sources.
@@ -72,6 +80,10 @@ Final-answer citations:
 Research source selection:
 - Set retrieval_mode whenever selecting the research agent, and explain the
   source choice in reason.
+- For web or both, provide search_query as concise search keywords rather than
+  the full delegated instruction. Populate allowed_domains for explicit domain
+  restrictions or official-source requests whose official host is known. Do not
+  guess an official host when uncertain; explain the uncertainty instead.
 - Use "documents" for questions about the provided corpus. This is the default
   for requests without an explicit source preference or need for current facts.
 - Use "web" for explicit web searches or current information outside the corpus.
@@ -109,6 +121,8 @@ def build_supervisor_context(state: ResearchState) -> str:
             "max_iterations", 8
         ),
     }
+    if state.get("allowed_domains"):
+        context["allowed_domains"] = state["allowed_domains"]
 
     return json.dumps(context, ensure_ascii=False)
 
@@ -180,19 +194,27 @@ async def supervisor_node(state: ResearchState) -> dict:
         "next_agent": decision.next_agent,
         "trace": [trace_event],
     }
+    domains = normalize_domains(state.get("allowed_domains") or decision.allowed_domains)
+    if domains:
+        update["allowed_domains"] = domains
+        trace_event["detail"] += f" (allowed_domains={domains})"
+    if decision.next_agent == "research" and decision.search_query.strip():
+        trace_event["detail"] += f" (search_query={decision.search_query.strip()})"
 
     if decision.next_agent == "finish":
         update["current_task"] = None
         sources = []
         for result in state.get("results", []):
             if result.get("success"):
-                sources.extend(result.get("sources", []))
+                sources.extend(source for source in result.get("sources", [])
+                               if source.get("source_kind") != "web" or url_matches_domains(source["url"], domains))
         update["final_answer"] = normalize_document_citations(decision.final_answer, sources)
         try:
             validate_document_citations(update["final_answer"], sources)
+            validate_web_citations(update["final_answer"], sources)
         except ValueError as exc:
             update["final_answer"] = (
-                "I could not produce a final answer with valid document citations. "
+                "I could not produce a final answer with valid source citations. "
                 "Please review the retrieved sources."
             )
             update["trace"].append({
@@ -201,7 +223,7 @@ async def supervisor_node(state: ResearchState) -> dict:
                 "detail": str(exc),
                 "provider": None,
                 "model": None,
-                "reason": "Document references must match evidence from successful workers",
+                "reason": "Document IDs and web URLs must match evidence from successful workers",
             })
     else:
         update["current_task"] = {
@@ -210,5 +232,9 @@ async def supervisor_node(state: ResearchState) -> dict:
         }
         if decision.next_agent == "research":
             update["current_task"]["retrieval_mode"] = decision.retrieval_mode
+            if decision.search_query.strip():
+                update["current_task"]["search_query"] = decision.search_query.strip()
+        if domains:
+            update["current_task"]["allowed_domains"] = domains
 
     return update

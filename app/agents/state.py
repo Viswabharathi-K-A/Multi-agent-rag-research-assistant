@@ -14,6 +14,8 @@ class AgentTask(TypedDict):
     instruction: str
     # Used by research tasks; optional for existing tasks and other agents.
     retrieval_mode: NotRequired[RetrievalMode]
+    search_query: NotRequired[str]
+    allowed_domains: NotRequired[list[str]]
 
 
 class AgentResult(TypedDict):
@@ -38,6 +40,8 @@ class TraceEvent(TypedDict):
 class ResearchState(TypedDict):
     # Original request
     user_query: str
+    # Once established, source restrictions persist across delegations.
+    allowed_domains: NotRequired[list[str]]
 
     # Supervisor planning
     current_task: AgentTask | None

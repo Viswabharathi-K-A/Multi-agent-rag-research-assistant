@@ -77,7 +77,8 @@ async def test_model_selected_tools_reach_followup_prompt(case, name, args):
         seen.append(list(messages))
         if len(seen) == 1:
             return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": "call-1"}])
-        return AIMessage(content="Analysis with https://example.com/python")
+        return AIMessage(content="Analysis with https://example.com/python" if name == "search_technical_web"
+                         else "Analysis of the tool result")
 
     case["llm"].ainvoke.side_effect = respond
     output = await code.code_node(case["state"])
@@ -164,3 +165,36 @@ async def test_generation_failures_and_cancellation(case, failure):
         result = (await code.code_node(case["state"]))["results"][0]
         assert not result["success"] and not result["content"]
         assert "private" not in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_code_passes_domain_restrictions_to_shared_search(case):
+    case["state"]["current_task"]["allowed_domains"] = ["example.com"]
+    case["llm"].ainvoke.side_effect = [
+        AIMessage(content="", tool_calls=[{"name": "search_technical_web", "args": {"query": "Reference"}, "id": "search"}]),
+        AIMessage(content="Analysis https://example.com/python"),
+    ]
+    result = (await code.code_node(case["state"]))["results"][0]
+    assert result["success"]
+    case["web"].assert_awaited_once_with("Reference", allowed_domains=["example.com"])
+
+
+@pytest.mark.asyncio
+async def test_code_rejects_invented_prose_citation_but_allows_example_endpoint(case):
+    case["llm"].ainvoke.return_value = AIMessage(content='Example:\n```python\nurl = "https://example.com/api"\n```')
+    assert (await code.code_node(case["state"]))["results"][0]["success"]
+    case["llm"].ainvoke.return_value = AIMessage(content="Evidence [https://example.com/invented]")
+    result = (await code.code_node(case["state"]))["results"][0]
+    assert not result["success"] and "exact supplied URLs" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_code_drops_inherited_evidence_outside_allowed_domains(case):
+    case["state"]["current_task"]["allowed_domains"] = ["python.org"]
+    case["state"]["results"] = [{"agent": "research", "success": True,
+        "content": "Third-party finding https://third-party.org/ref", "sources": [
+            {"source_kind": "web", "url": "https://third-party.org/ref", "source_id": "web-1"}]}]
+    result = (await code.code_node(case["state"]))["results"][0]
+    assert result["success"] and result["sources"] == []
+    messages = case["llm"].ainvoke.call_args.args[0]
+    assert json.loads(messages[1].content)["completed_results"] == []

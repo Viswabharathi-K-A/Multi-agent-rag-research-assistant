@@ -135,7 +135,41 @@ async def test_invalid_document_citation_fails_even_with_valid_reference(case, r
     assert result["sources"][0]["content"] == case["chunk"].page_content
     assert output["trace"][-1]["action"] == "summary_failed"
     assert not any(event["action"] == "summary_completed" for event in output["trace"])
-    case["llm"].ainvoke.assert_awaited_once()
+    assert case["llm"].ainvoke.await_count == 2
+    case["documents"].assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_missing_document_citations_are_repaired_once_without_retrieval_repeat(case):
+    case["llm"].ainvoke.side_effect = [AIMessage(content="Uncited summary"),
+                                      AIMessage(content="Cited summary [raft.pdf:p6:c1]")]
+    output = await summary.summary_node(case["state"])
+    assert output["results"][0]["success"]
+    assert output["results"][0]["content"].startswith("Cited summary [raft.pdf:p6:c1]")
+    assert case["llm"].ainvoke.await_count == 2
+    case["documents"].assert_called_once()
+    case["factory"].assert_called_once_with("summary")
+    assert sum(event["action"] == "citation_repair_started" for event in output["trace"]) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repaired", [True, False])
+async def test_web_citation_repair_is_bounded_and_preserves_original_evidence(case, repaired):
+    source = {"source_id": "web-1", "source_kind": "web", "url": "https://example.com/guide",
+              "title": "Guide", "content": "Evidence", "metadata": {}}
+    earlier = {"agent": "research", "success": True, "content": "Finding https://example.com/guide",
+               "sources": [source]}
+    case["state"]["results"] = [earlier]
+    second = "Summary https://example.com/guide" if repaired else "Summary https://example.com/invented"
+    case["llm"].ainvoke.side_effect = [AIMessage(content="Summary without URL"), AIMessage(content=second)]
+    output = await summary.summary_node(case["state"])
+    result = output["results"][0]
+    assert result["success"] is repaired
+    assert result["sources"] == [source]
+    assert case["state"]["results"] == [earlier]
+    assert case["llm"].ainvoke.await_count == 2
+    case["documents"].assert_not_called()
+    assert (result["content"].startswith(second) if repaired else result["content"] == "")
 
 
 @pytest.mark.asyncio

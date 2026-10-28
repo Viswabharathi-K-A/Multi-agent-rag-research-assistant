@@ -210,7 +210,7 @@ async def test_finish_rejects_invalid_document_citations_without_retry(case, ans
     assert output["next_agent"] == "finish" and output["current_task"] is None
     assert output["iteration"] == 3
     assert output["final_answer"] == (
-        "I could not produce a final answer with valid document citations. "
+        "I could not produce a final answer with valid source citations. "
         "Please review the retrieved sources."
     )
     assert "results" not in output and case["state"]["results"] == [result]
@@ -256,7 +256,7 @@ async def test_finish_does_not_accept_ids_only_retained_by_failed_workers(case, 
 
     output = await supervisor.supervisor_node(case["state"])
 
-    assert "valid document citations" in output["final_answer"]
+    assert "valid source citations" in output["final_answer"]
     assert output["trace"][-1]["action"] == "citation_validation_failed"
 
 
@@ -280,3 +280,53 @@ async def test_iteration_limit_stops_without_settings_or_model(case, monkeypatch
     case["factory"].assert_not_called()
     case["model"].with_structured_output.assert_not_called()
     case["structured"].ainvoke.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_research_delegation_carries_concise_query_and_persistent_domains(case):
+    case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
+        next_agent="research", instruction="Explain the current official documentation",
+        reason="Official source required", retrieval_mode="web", search_query="asyncio overview",
+        allowed_domains=["DOCS.PYTHON.ORG"])
+    first = await supervisor.supervisor_node(case["state"])
+    assert first["current_task"]["search_query"] == "asyncio overview"
+    assert first["current_task"]["allowed_domains"] == ["docs.python.org"]
+    assert first["allowed_domains"] == ["docs.python.org"]
+
+    case["state"]["allowed_domains"] = first["allowed_domains"]
+    case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
+        next_agent="code", instruction="Check API", reason="Need code reasoning",
+        allowed_domains=["third-party.org"])
+    second = await supervisor.supervisor_node(case["state"])
+    assert second["current_task"]["allowed_domains"] == ["docs.python.org"]
+    context = json.loads(case["structured"].ainvoke.call_args.args[0][1].content)
+    assert context["allowed_domains"] == ["docs.python.org"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", [
+    "Finding [https://example.com/invented]",
+    "Finding https://example.com/ref#unsupplied-fragment",
+    "Finding without web citation",
+])
+async def test_final_web_citations_must_match_successful_evidence(case, answer):
+    case["state"]["results"] = [{"agent": "research", "success": True, "sources": [
+        {"source_kind": "web", "source_id": "web-1", "url": "https://example.com/ref"}]}]
+    case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
+        next_agent="finish", instruction="", reason="Task complete", final_answer=answer)
+    output = await supervisor.supervisor_node(case["state"])
+    assert "valid source citations" in output["final_answer"]
+    assert output["trace"][-1]["action"] == "citation_validation_failed"
+    case["structured"].ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_final_web_answer_cannot_cite_sources_outside_domain_restriction(case):
+    case["state"]["allowed_domains"] = ["python.org"]
+    case["state"]["results"] = [{"success": True, "sources": [
+        {"source_kind": "web", "source_id": "web-1", "url": "https://third-party.org/ref"}]}]
+    case["structured"].ainvoke.return_value = supervisor.SupervisorDecision(
+        next_agent="finish", instruction="", reason="Task complete",
+        final_answer="Finding https://third-party.org/ref")
+    output = await supervisor.supervisor_node(case["state"])
+    assert output["trace"][-1]["action"] == "citation_validation_failed"
