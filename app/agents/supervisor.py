@@ -65,6 +65,14 @@ Rules:
   evidence answers the request, delegate appropriate work or explain the failure.
 - If the task is complete, select "finish".
 - When finishing, provide a grounded final answer.
+- Keep the final answer concise by default: aim for about 150-250 words for
+  substantive questions, and much less for simple questions. Follow the user's
+  requested length and detail instead when specified; do not truncate necessary
+  code, evidence, or qualifications to meet a word target.
+- Answer directly, combining successful findings without repeating each worker's
+  report, source appendix, or orchestration history. Use brief Markdown headings
+  (## or ###) only when multiple topics need separation, short lists where useful,
+  and fenced code blocks for code. Simple answers need no forced headings.
 - Source restrictions in allowed_domains apply to all web evidence and cannot
   be broadened on failure. A third-party source is not an official source merely
   because it discusses official documentation. Report missing evidence honestly.

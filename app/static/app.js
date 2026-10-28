@@ -9,25 +9,200 @@ const routingLog = document.getElementById("routing-log");
 const citations = document.getElementById("citations");
 let turnNumber = 0;
 
-function addText(parent, label, text) {
+// One source of truth for agent identity; CSS derives all tints from this RGB.
+const AGENTS = {
+    research: {name: "Research Agent", rgb: "248, 113, 113",
+        icon: ["M21 21l-5-5", "M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0"]},
+    code: {name: "Code Agent", rgb: "96, 165, 250",
+        icon: ["M8 5L1 12l7 7M16 5l7 7-7 7M14 3l-4 18"]},
+    summary: {name: "Summary Agent", rgb: "74, 222, 128",
+        icon: ["M14 2H4v20h16V8zM14 2v6h6M8 12h8M8 16h8"]},
+    supervisor: {name: "Supervisor Agent", rgb: "192, 132, 252",
+        icon: ["M9 2h6v6H9zM2 16h6v6H2zM16 16h6v6h-6zM12 8v4M5 16v-4h14v4"]},
+};
+
+function decorateAgent(card, heading, agent) {
+    if (!Object.hasOwn(AGENTS, agent)) return;
+    const identity = AGENTS[agent];
+    card.classList.add("agent-card");
+    card.dataset.agent = agent;
+    card.style.setProperty("--agent-rgb", identity.rgb);
+    heading.classList.add("agent-heading");
+    const context = document.createElement("span");
+    context.className = "agent-context";
+    context.textContent = heading.textContent;
+    const name = document.createElement("span");
+    name.className = "agent-name";
+    name.textContent = identity.name;
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("viewBox", "0 0 24 24");
+    icon.setAttribute("aria-hidden", "true");
+    icon.classList.add("agent-icon");
+    for (const drawing of identity.icon) {
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", drawing);
+        icon.append(path);
+    }
+    heading.replaceChildren(icon, name, context);
+}
+
+function setAgentStatus(card, text) {
+    const heading = card.querySelector(".agent-heading");
+    if (!heading) return;
+    let badge = heading.querySelector(".agent-status");
+    if (!badge) {
+        badge = document.createElement("span");
+        badge.className = "agent-status";
+        heading.append(badge);
+    }
+    badge.textContent = text;
+}
+
+function traceStatus(event, agent) {
+    if (event === `${agent}_completed`) return "Completed";
+    if (event === `${agent}_failed`) return "Failed";
+    const statuses = {
+        delegate: "Delegated", finish: "Finished", limit_reached: "Limit reached",
+        citation_validation_failed: "Validation failed", tool_failed: "Tool failed",
+        tool_completed: "Tool completed", retrieval_completed: "Evidence retrieved",
+        completion_reconsideration: "Reconsidering", citation_repair_started: "Repairing citations",
+    };
+    if (Object.hasOwn(statuses, event)) return statuses[event];
+    return event.endsWith("_started") ? "Running" : null;
+}
+
+function addText(parent, label, text, bodyTag = "p", agent = null) {
     const section = document.createElement("section");
     const heading = document.createElement("h3");
     heading.textContent = label;
-    const body = document.createElement("p");
+    decorateAgent(section, heading, agent);
+    const body = document.createElement(bodyTag);
     body.textContent = text;
     section.append(heading, body);
     parent.append(section);
     return body;
 }
 
-function addPanelTurn(parent, label) {
+function appendInline(parent, text, sourceLinks) {
+    // Support a small Markdown subset using DOM nodes, never generated HTML.
+    for (const part of text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\])/g)) {
+        if (part.startsWith("`") && part.endsWith("`")) {
+            const code = document.createElement("code");
+            code.textContent = part.slice(1, -1);
+            parent.append(code);
+        } else if (part.startsWith("**") && part.endsWith("**")) {
+            const strong = document.createElement("strong");
+            appendInline(strong, part.slice(2, -2), sourceLinks);
+            parent.append(strong);
+        } else {
+            const source = sourceLinks.get(part.slice(1, -1));
+            if (part.startsWith("[") && part.endsWith("]") && source) {
+                const link = document.createElement("a");
+                link.href = `#${source.id}`;
+                link.textContent = part;
+                link.addEventListener("click", () => { source.open = true; });
+                parent.append(link);
+            } else {
+                parent.append(document.createTextNode(part));
+            }
+        }
+    }
+}
+
+function renderAnswer(parent, text, sourceLinks) {
+    parent.replaceChildren();
+    let paragraph = [];
+    let list = null;
+    let fence = null;
+    let code = null;
+    const flushParagraph = () => {
+        if (!paragraph.length) return;
+        const p = document.createElement("p");
+        appendInline(p, paragraph.join(" "), sourceLinks);
+        parent.append(p);
+        paragraph = [];
+    };
+
+    for (const line of text.replace(/\r\n?/g, "\n").split("\n")) {
+        if (fence) {
+            if (new RegExp(`^ {0,3}${fence[0]}{${fence.length},}\\s*$`).test(line)) {
+                fence = null;
+            } else {
+                code.append(document.createTextNode(`${line}\n`));
+            }
+            continue;
+        }
+        const openingFence = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+        const heading = line.match(/^ {0,3}(#{1,6})\s+(.+?)(?:\s+#+)?\s*$/);
+        const bullet = line.match(/^ {0,3}[-*+•]\s+(.*)$/);
+        const ordered = line.match(/^ {0,3}(\d+)[.)]\s+(.*)$/);
+        if (openingFence) {
+            flushParagraph();
+            list = null;
+            fence = openingFence[1];
+            const pre = document.createElement("pre");
+            code = document.createElement("code");
+            pre.append(code);
+            parent.append(pre);
+        } else if (heading) {
+            flushParagraph();
+            list = null;
+            const h = document.createElement(`h${Math.min(6, heading[1].length + 3)}`);
+            appendInline(h, heading[2], sourceLinks);
+            parent.append(h);
+        } else if (bullet || ordered) {
+            flushParagraph();
+            const tag = ordered ? "ol" : "ul";
+            if (!list || list.tagName.toLowerCase() !== tag) {
+                list = document.createElement(tag);
+                if (ordered) list.start = Number(ordered[1]);
+                parent.append(list);
+            }
+            const item = document.createElement("li");
+            appendInline(item, ordered ? ordered[2] : bullet[1], sourceLinks);
+            list.append(item);
+        } else if (!line.trim()) {
+            flushParagraph();
+            list = null;
+        } else {
+            list = null;
+            paragraph.push(line.trim());
+        }
+    }
+    flushParagraph();
+}
+
+function addPanelTurn(parent, turn, query) {
     const details = document.createElement("details");
+    details.className = "turn-section";
     details.open = true;
     const summary = document.createElement("summary");
-    summary.textContent = label;
+    const title = document.createElement("strong");
+    title.className = "turn-title";
+    title.textContent = `Turn ${turn}`;
+    const question = document.createElement("span");
+    question.className = "turn-query";
+    question.textContent = query;
+    summary.append(title, question);
     details.append(summary);
     parent.append(details);
     return details;
+}
+
+function renderDecision(parent, reason) {
+    const marker = "Decision:";
+    const boundary = reason.indexOf(marker);
+    if (boundary >= 0 && reason.slice(0, boundary).trim()) {
+        const rationale = document.createElement("p");
+        rationale.className = "routing-rationale";
+        rationale.textContent = reason.slice(0, boundary).trim();
+        parent.append(rationale);
+    }
+    const heading = document.createElement("h4");
+    heading.textContent = "Decision";
+    const explanation = document.createElement("p");
+    explanation.textContent = boundary >= 0 ? reason.slice(boundary + marker.length).trim() : reason;
+    parent.append(heading, explanation);
 }
 
 chatForm.addEventListener("submit", async (event) => {
@@ -44,18 +219,68 @@ chatForm.addEventListener("submit", async (event) => {
     queryInput.disabled = true;
     sendButton.textContent = "Working…";
     const turn = ++turnNumber;
-    const label = `Turn ${turn}: ${query}`;
     const turnMessages = document.createElement("section");
     messages.append(turnMessages);
     addText(turnMessages, "You", query);
     const status = addText(turnMessages, "Status", "Connecting…");
-    const turnTrace = addPanelTurn(traceLog, label);
-    const turnRouting = addPanelTurn(routingLog, label);
-    const turnSources = addPanelTurn(citations, label);
+    const turnTrace = addPanelTurn(traceLog, turn, query);
+    const turnRouting = addPanelTurn(routingLog, turn, query);
+    const turnSources = addPanelTurn(citations, turn, query);
     const workerText = new Map();
+    let workerPanel = null;
+    let activeAgent = null;
+    let renderFrame = null;
     const sourceLinks = new Map();
     let terminal = false;
     let reader;
+
+    function workerOutput(agent) {
+        if (!workerPanel) {
+            workerPanel = document.createElement("details");
+            workerPanel.className = "worker-output";
+            workerPanel.open = true;
+            const summary = document.createElement("summary");
+            summary.textContent = "Intermediate Agent Outputs";
+            workerPanel.append(summary);
+            turnMessages.append(workerPanel);
+        }
+        if (!workerText.has(agent)) {
+            const card = document.createElement("details");
+            const header = document.createElement("summary");
+            header.textContent = "working output";
+            decorateAgent(card, header, agent);
+            const body = document.createElement("div");
+            body.className = "answer-content";
+            card.append(header, body);
+            workerPanel.append(card);
+            workerText.set(agent, {body, text: ""});
+        }
+        return workerText.get(agent);
+    }
+
+    function showActiveWorker(agent) {
+        const output = workerOutput(agent);
+        if (activeAgent !== agent) {
+            workerPanel.open = true;
+            output.body.parentElement.open = true;
+            activeAgent = agent;
+        }
+        return output;
+    }
+
+    function renderWorkers() {
+        if (renderFrame !== null) {
+            cancelAnimationFrame(renderFrame);
+            renderFrame = null;
+        }
+        for (const output of workerText.values()) {
+            renderAnswer(output.body, output.text, sourceLinks);
+        }
+    }
+
+    function scheduleWorkerRender() {
+        if (renderFrame === null) renderFrame = requestAnimationFrame(renderWorkers);
+    }
 
     function handleEvent(frame) {
         const dataLines = frame.split(/\r?\n/)
@@ -66,17 +291,33 @@ chatForm.addEventListener("submit", async (event) => {
         if (type === "start") {
             status.textContent = "Running agents…";
         } else if (type === "token") {
-            if (!workerText.has(data.agent)) {
-                workerText.set(data.agent, addText(turnMessages, `${data.agent} — working output`, ""));
-            }
-            workerText.get(data.agent).append(document.createTextNode(data.text));
+            const output = showActiveWorker(data.agent);
+            output.text += data.text;
+            scheduleWorkerRender();
+            setAgentStatus(output.body.parentElement, "Running");
+            status.textContent = `${AGENTS[data.agent]?.name || data.agent} is working…`;
         } else if (type === "trace") {
             const detail = data.details;
-            addText(turnTrace, `${data.agent}: ${data.event}`,
+            const trace = addText(turnTrace, data.event,
                 [detail.detail, detail.reason, detail.tool ? `Tool: ${detail.tool}` : ""]
-                    .filter(Boolean).join("\n"));
+                    .filter(Boolean).join("\n"), "p", data.agent);
+            const actualStatus = traceStatus(data.event, data.agent);
+            if (actualStatus) setAgentStatus(trace.parentElement, actualStatus);
+            if (["research", "code", "summary"].includes(data.agent)
+                    && ["llm_started", `${data.agent}_completed`, `${data.agent}_failed`].includes(data.event)) {
+                const output = data.event === "llm_started"
+                    ? showActiveWorker(data.agent) : workerOutput(data.agent);
+                setAgentStatus(output.body.parentElement, actualStatus);
+            }
         } else if (type === "routing") {
-            addText(turnRouting, `${data.agent}: ${data.provider} / ${data.model}`, data.reason);
+            const isSupervisor = data.agent === "supervisor";
+            const route = addText(turnRouting, `${data.provider} / ${data.model}`,
+                isSupervisor ? "" : data.reason, isSupervisor ? "div" : "p", data.agent);
+            if (isSupervisor) {
+                route.className = "routing-reason";
+                renderDecision(route, data.reason);
+            }
+            setAgentStatus(route.parentElement, "Provider selected");
         } else if (type === "citation") {
             const source = document.createElement("details");
             source.id = `source-${turn}-${turnSources.children.length}`;
@@ -99,22 +340,17 @@ chatForm.addEventListener("submit", async (event) => {
             // Search-local web IDs can collide; do not guess an ambiguous target.
             if (sourceLinks.has(data.source_id)) sourceLinks.set(data.source_id, null);
             else sourceLinks.set(data.source_id, source);
+            // Sources can arrive after the worker's citation text has streamed.
+            scheduleWorkerRender();
         } else if (type === "done") {
-            const answer = addText(turnMessages, "Final answer", "");
-            // Link known citation IDs using DOM nodes, never generated HTML.
-            for (const part of data.final_answer.split(/(\[[^\]\n]+\])/g)) {
-                const source = sourceLinks.get(part.slice(1, -1));
-                if (part.startsWith("[") && part.endsWith("]") && source) {
-                    const link = document.createElement("a");
-                    link.href = `#${source.id}`;
-                    link.textContent = part;
-                    link.addEventListener("click", () => { source.open = true; });
-                    answer.append(link);
-                } else {
-                    answer.append(document.createTextNode(part));
-                }
-            }
-            status.textContent = "Complete. Worker output above is intermediate.";
+            const answer = addText(turnMessages, "Final answer", "", "div", "supervisor");
+            answer.className = "answer-content";
+            answer.parentElement.classList.add("final-answer");
+            setAgentStatus(answer.parentElement, "Response ready");
+            renderAnswer(answer, data.final_answer, sourceLinks);
+            if (workerPanel) turnMessages.insertBefore(answer.parentElement, workerPanel);
+            status.textContent = workerPanel
+                ? "Complete. Intermediate agent outputs are available below." : "Complete.";
             terminal = true;
         } else if (type === "error") {
             status.textContent = `Error: ${data.message} Any partial worker output is incomplete.`;
@@ -159,6 +395,18 @@ chatForm.addEventListener("submit", async (event) => {
                 // The connection may already be closed after a network failure.
             }
             reader.releaseLock();
+        }
+        if (workerPanel) {
+            renderWorkers();
+            workerPanel.open = false;
+            for (const output of workerText.values()) {
+                const badge = output.body.parentElement.querySelector(".agent-status");
+                if (badge?.textContent === "Running") {
+                    setAgentStatus(output.body.parentElement, "Completion not reported");
+                }
+            }
+        } else if (renderFrame !== null) {
+            cancelAnimationFrame(renderFrame);
         }
         sendButton.disabled = false;
         queryInput.disabled = false;
