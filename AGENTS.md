@@ -1,351 +1,310 @@
-
-# AGENTS.md — CSCI 599 Assignment 2
+# AGENTS.md — Multi-Agent RAG Portfolio Project
 
 ## 1. Project Objective
 
-This repository contains my USC CSCI 599 Assignment 2 multi-agent RAG application.
+This project started as USC CSCI 599 Assignment 2 and has already been submitted.
 
-The goal is to build a complete, reliable, and rubric-compliant project while keeping the implementation as simple, concise, and understandable as possible.
+The goal now is to transform it into a clean, understandable, resume-worthy multi-agent RAG application.
 
-This is also a learning and resume project. I need to understand the architecture, code, execution flow, and design decisions well enough to explain them confidently during technical interviews.
+**Primary objectives:**
+- Simplify the existing implementation without breaking core functionality.
+- Remove unnecessary complexity, abstractions, and overengineering.
+- Keep the code readable, maintainable, and easy to explain during technical interviews.
+- Learn the technologies and architectural concepts used in the project.
+- Gradually introduce AWS services to gain practical cloud experience.
+- Build a reliable project without unnecessary production-scale complexity.
 
-Before making architectural decisions, read the assignment description, grading rubric, and relevant supporting materials in `docs/`.
-
-The assignment requirements take priority over preferences for shorter code.
+**Assignment rubric compliance is no longer a priority.** Focus on building a practical portfolio project.
 
 ---
 
 ## 2. Code Simplicity — Highest Priority
 
-**Build the simplest correct implementation that fully satisfies the assignment requirements.**
+Always prefer the simplest implementation that correctly solves the problem.
 
-### Mandatory Rules
+### Guidelines
 
-1. Prefer simple, readable code over sophisticated or overly abstract implementations.
-2. Use straightforward Python functions, loops, dictionaries, and conditionals whenever possible.
-3. Avoid unnecessary classes, wrappers, factories, managers, interfaces, adapters, and helper functions.
-4. Do not create generic frameworks for a specific integration.
-5. Avoid speculative defensive programming for hypothetical situations.
-6. Handle realistic failures, actual API behavior, and required security concerns.
-7. Keep functions focused and easy to understand.
-8. Use meaningful variable names and clear control flow.
-9. Minimize dependencies and reuse existing libraries.
-10. Avoid clever one-liners and unnecessarily advanced Python patterns.
-11. Do not add functionality that is unrelated to the current task.
-12. Do not sacrifice correctness, security, reliability, or rubric compliance merely to reduce line count.
+1. Prefer straightforward Python functions, loops, dictionaries, and conditionals.
+2. Avoid unnecessary classes, wrappers, factories, managers, adapters, and abstraction layers.
+3. Remove duplicated logic, unused functions, unnecessary configuration, and redundant state.
+4. Avoid excessive defensive programming for unlikely scenarios.
+5. Keep essential error handling, input validation, and security protections.
+6. Avoid complicated Python patterns when simpler alternatives exist.
+7. Minimize dependencies and unnecessary external libraries.
+8. Keep functions focused, readable, and easy to understand.
+9. Avoid introducing functionality unrelated to the current task.
+10. Do not optimize prematurely or introduce unnecessary performance improvements.
+11. Preserve working functionality unless I explicitly approve its removal.
+12. Prefer readability over reducing the number of lines.
 
-### Simplicity Checklist
-
-Before implementing anything, ask:
-
-- Can this be done with fewer moving parts?
-- Is this abstraction genuinely necessary?
-- Am I solving an actual requirement or a hypothetical future problem?
-- Would a simpler implementation be equally correct?
-- Can I explain this code clearly to a graduate CS student?
-
-If a simpler implementation meets the same requirements, choose it.
-
-Do not impose arbitrary line limits. Optimize for readability and conceptual simplicity rather than the smallest possible number of lines.
+**Important:** Do not rewrite working code merely to make it shorter. Simplify only when there is a meaningful improvement.
 
 ---
 
-## 3. Assignment and Rubric Compliance
+## 3. Core Architecture
 
-The complete assignment description and grading rubric are the authoritative sources for project requirements.
+Preserve the project's important technical features unless I approve a change.
 
-The project includes:
+The current architecture includes:
 
-- LangGraph-based multi-agent orchestration with an LLM supervisor.
-- At least three genuinely specialized agents: Research, Code, and Summary.
-- Distinct agent responsibilities, prompts, and appropriate tool access.
-- Document ingestion, chunking, embeddings, and vector retrieval.
-- A grounded RAG pipeline using LangChain LCEL and a supported vector store.
-- Source citations and evidence preservation.
-- Tavily Remote MCP integration for real-time research.
-- Actual MCP tool sharing or A2A integration, as required by the rubric.
-- At least two LLM providers with justified and inspectable routing.
-- FastAPI backend and SSE streaming.
-- A simple frontend using HTML, CSS, and JavaScript.
-- RAGAS-based evaluation.
-- Google Cloud Run deployment.
+- LangGraph for multi-agent orchestration.
+- An LLM Supervisor for dynamic agent routing.
+- Research, Code, and Summary agents.
+- OpenAI and Google Gemini model integrations.
+- Document ingestion, chunking, embeddings, and vector search.
+- RAG using Chroma and LangChain.
+- Tavily Remote MCP for external research.
+- Source citations.
+- FastAPI backend.
+- Server-Sent Events (SSE) for streaming.
+- HTML, CSS, and JavaScript frontend.
 
-Do not assume a requirement is complete merely because related code exists.
+These features provide the project's main technical value.
 
-Verify implementation and tests against the actual assignment.
+However, unnecessary complexity surrounding these features can be removed.
 
-Never remove a required feature to simplify the code.
+For any proposed architectural simplification, explain:
+- What currently exists.
+- Why it is unnecessarily complicated.
+- What the simpler alternative would look like.
+- What functionality would change.
+- Whether the change affects other components.
 
-Clearly distinguish required features from optional enhancements.
+Do not remove important functionality without approval.
 
 ---
 
-## 4. Step-by-Step Development Workflow
+## 4. Mandatory Development Workflow
 
-**Work like a technical mentor teaching me while building the project.**
+**This is the most important instruction.**
 
-Do not implement an entire feature or modify many files at once unless I explicitly approve it.
+Do not implement many changes at once.
 
-Follow this workflow:
+Always follow:
 
-**Plan → Explain → Implement one file → Explain code → Test → Wait for approval → Next file**
+**Review → Propose Changes → Wait for Approval → Implement One Change → Explain → Test → Wait for Approval**
 
-### Step A — Present a Plan
+### Step 1 — Review the Project
 
-Before implementing a new feature or performing a substantial refactor:
+Before modifying anything:
 
-1. Inspect the existing relevant code.
-2. Read the applicable assignment requirements.
-3. Explain what we are building and why.
-4. Explain how the component fits into the overall architecture.
-5. Identify every file that needs to be created or modified.
-6. Present the implementation order, file by file.
-7. Explain important dependencies and design decisions.
-8. Describe the tests needed.
-9. Identify any expected paid API calls.
-10. Wait for my approval before modifying files.
+1. Inspect the relevant existing files.
+2. Understand the current implementation and dependencies.
+3. Identify unnecessary complexity.
+4. Identify code that can be simplified or removed.
+5. Avoid recommending changes to components that are already sufficiently simple.
 
-Keep the plan practical and concise.
+### Step 2 — Propose a List of Changes
 
-### Step B — Implement One File
+Before implementation, present a numbered list of proposed changes.
 
-After I approve the plan:
+For each change, include:
+- Files affected.
+- Current problem.
+- Proposed simplification or improvement.
+- Reason for the change.
+- Expected benefit.
+- Potential risks or trade-offs.
+- Estimated complexity: Low, Medium, or High.
 
-1. Implement only the next approved file.
-2. Explain its purpose.
-3. Use the simplest correct implementation.
-4. Show the complete updated file, not just a diff, unless I request otherwise.
-5. Explain each function and important code section.
-6. Explain how it interacts with other project files.
-7. Explain relevant framework concepts where necessary.
-8. Run focused offline tests when practical.
-9. Report the results.
-10. Stop and wait for my approval before continuing.
+Order changes logically, considering dependencies.
 
-If two files must change together to maintain correctness, explain why and request approval first.
+**Do not modify any files during the planning stage.**
 
-### Step C — Approval Checkpoint
+### Step 3 — Wait for Approval
 
-At the end of every implementation step, report:
+After presenting the plan, stop.
 
-- File completed.
+Wait for me to approve a specific change.
+
+Approval for one change does not authorize the remaining changes.
+
+### Step 4 — Implement One Change
+
+After approval:
+
+1. Implement only the approved change.
+2. Modify only the files necessary for that change.
+3. Keep the implementation simple.
+4. Do not introduce unrelated refactoring.
+5. Do not automatically implement other improvements from the plan.
+6. Preserve existing functionality.
+
+Multiple tightly related files may be modified together when necessary, but only as part of the single approved change.
+
+### Step 5 — Explain and Verify
+
+After implementation, explain:
 - What changed.
-- Why the design was chosen.
-- Important code explanations.
-- Tests run and their actual results.
-- Remaining work.
-- Next proposed file.
+- Why the change was necessary.
+- How the updated code works.
+- How it interacts with other components.
+- Which concepts I should understand for interviews.
+- How the change was verified.
 
-**Do not automatically proceed to the next file.**
+Use small examples when explaining complicated concepts.
 
-### Exceptions
+### Step 6 — Stop
 
-Small bug fixes, import corrections, or tightly coupled changes may be grouped when necessary, but explain them.
+After completing the approved change:
 
-If I explicitly request a complete implementation across multiple files, follow that request instead.
+- Report the result.
+- Identify the next proposed change.
+- Wait for my explicit approval.
 
----
-
-## 5. Code Explanation and Teaching
-
-Assume I understand basic programming but am learning the frameworks and architectural patterns used in this project.
-
-For every implemented file, explain:
-
-### Purpose
-Why the file exists and what responsibility it has.
-
-### Functions
-What each important function does, including inputs and outputs.
-
-### Execution Flow
-How the code executes step by step.
-
-### Dependencies
-Which libraries, modules, APIs, or services the file interacts with.
-
-### Design Decisions
-Why the implementation was chosen over alternatives.
-
-### Testing
-What tests verify and how to run them.
-
-### Interview Relevance
-What concepts I should understand well enough to explain during interviews.
-
-Use small examples and execution walkthroughs when useful.
-
-Avoid unnecessarily lengthy explanations of basic syntax.
+**Never automatically continue to the next change.**
 
 ---
 
-## 6. API Usage and Cost Management
+## 5. Testing — Keep It Extremely Simple
 
-This project uses paid or quota-limited services, including OpenAI, Google Gemini, and Tavily.
+The project does not need an extensive enterprise-level test suite.
 
-**Do not make unnecessary API calls.**
+Prefer a small number of straightforward tests that verify essential functionality.
 
-### Rules
+### Guidelines
 
-1. Prefer mocked tests, fixtures, and predefined responses.
-2. Normal unit tests must not make paid API requests.
-3. Mark live integration tests with `@pytest.mark.live`.
-4. Do not run live tests automatically.
-5. Do not repeatedly call APIs to verify functionality already tested.
-6. Use real APIs only when mocks cannot meaningfully verify integration.
-7. Keep approved live tests minimal in prompt size, search results, and request count.
-8. Do not invoke LLMs for tasks that deterministic Python can reliably perform.
-9. Avoid unnecessary retries and repeated searches.
-10. Never run paid load tests, stress tests, or large evaluation batches without approval.
-11. Record token usage, latency, and estimated cost when practical.
-12. Never expose API keys in code, logs, traces, or documentation.
-13. Do not compromise assignment requirements to save API credits.
+1. Reduce the existing pytest suite to a few simple, meaningful tests.
+2. Remove unnecessary fixtures, complicated mocks, and excessive test helpers.
+3. Avoid testing implementation details that do not affect observable behavior.
+4. Do not create elaborate testing infrastructure.
+5. Prefer simple smoke tests and basic unit tests.
+6. Use manual testing when it is simpler and appropriate.
+7. Avoid paid API calls during automated testing.
+8. Do not run live integration tests without my approval.
+9. Do not add tests solely to increase coverage metrics.
+10. Keep the tests understandable enough that I can explain them.
 
-### Before Any Paid API Test
+A reasonable target is approximately 3–5 simple tests, covering important functionality.
 
-Explain:
+If a test is unnecessarily complicated, propose simplifying or removing it.
 
-- Why the live test is necessary.
-- Which provider or API will be called.
-- The estimated number of requests.
-- What successful verification would demonstrate.
-
-**Wait for my explicit approval before making paid API calls.**
-
-Do not interpret permission to implement a feature as permission to spend API credits.
+Do not remove all verification merely to reduce code.
 
 ---
 
-## 7. Testing Standards
+## 6. AWS Integration — Future Enhancement
 
-Use focused, deterministic tests wherever possible.
+I plan to enhance this project with AWS services while learning AWS concepts.
 
-Tests should cover:
+AWS integration should be gradual and should provide meaningful technical or resume value.
 
-- Normal behavior.
-- Important edge cases.
-- Meaningful failure scenarios.
-- State updates and agent routing.
-- Citation preservation.
-- API response handling.
-- Relevant integration boundaries.
+### Guidelines
 
-Prefer mocks over real external services.
+1. Do not introduce AWS services immediately without discussing the architecture.
+2. First understand the existing application and its deployment requirements.
+3. Propose a practical AWS integration roadmap.
+4. Explain what each AWS service does and why it is useful.
+5. Prefer services that solve actual problems in the application.
+6. Avoid introducing unnecessary infrastructure or services solely to make the project look more impressive.
+7. Consider free-tier availability, ongoing costs, and operational complexity.
+8. Explain how each AWS service interacts with the existing components.
+9. Implement only one approved AWS improvement at a time.
+10. Do not deploy resources or incur AWS charges without my explicit approval.
 
-Run focused tests after each file when practical.
+Potential services to evaluate include:
+- Amazon S3 for document storage.
+- Amazon ECS with Fargate for container deployment.
+- Amazon ECR for Docker images.
+- Amazon CloudWatch for logs and monitoring.
+- AWS IAM for permissions and access control.
+- Amazon Bedrock for managed LLM integration, if justified.
 
-Run the broader offline suite after completing a feature.
+These are possibilities, not mandatory requirements.
 
-Do not claim a test passed unless it was actually executed.
-
-Clearly report skipped tests and unverified integrations.
-
-Do not introduce unnecessarily complex testing infrastructure.
-
----
-
-## 8. Architecture and Design Decisions
-
-Prefer the simplest architecture that satisfies the rubric.
-
-For this project:
-
-- Keep agent responsibilities clearly separated.
-- Use LangGraph for orchestration.
-- Use genuine MCP integration rather than replacing it with direct API calls.
-- Preserve source attribution throughout retrieval and generation.
-- Keep LLM routing explicit and inspectable.
-- Avoid unnecessary state fields and duplicated data.
-- Avoid excessive abstraction layers around external services.
-- Use deterministic logic where an LLM is unnecessary.
-- Keep error handling practical and understandable.
-- Consider Google Cloud Run compatibility when choosing dependencies.
-
-Do not redesign working components without identifying a concrete problem.
-
-When additional complexity is necessary, explain why.
+**Do not implement AWS features until I explicitly request and approve them.**
 
 ---
 
-## 9. Documentation and Interview Preparation
+## 7. Code Explanation and Learning
 
-Document important implementation steps throughout development.
+Treat this project as both a software engineering project and a learning exercise.
 
-The documentation should help me revise the project for technical interviews and eventually prepare a comprehensive project-review PDF.
+When explaining an implementation, cover:
 
-Record:
+1. **Purpose:** Why the component exists.
+2. **Execution flow:** What happens step by step.
+3. **Inputs and outputs:** What data the component receives and produces.
+4. **Dependencies:** Which libraries, services, or modules it uses.
+5. **Design decisions:** Why this approach was chosen.
+6. **Trade-offs:** What alternatives exist and why they were not selected.
+7. **Interview relevance:** What concepts I should be able to explain.
 
-- Architecture and component responsibilities.
-- Important implementation decisions.
-- Data flow between agents.
+Use concrete examples when helpful.
+
+Do not overwhelm explanations with unnecessary theoretical details.
+
+The goal is for me to confidently explain every important component without memorizing code.
+
+---
+
+## 8. API Usage and Cost Management
+
+The application uses external services such as OpenAI, Google Gemini, and Tavily.
+
+Follow these rules:
+
+1. Avoid unnecessary paid API calls.
+2. Prefer local verification when possible.
+3. Never run paid load tests or large evaluation batches without approval.
+4. Do not make repeated API calls merely to confirm already verified behavior.
+5. Never expose API keys or credentials.
+6. Do not deploy cloud resources without approval.
+7. Explain expected costs before proposing live testing or deployment.
+
+**Always ask for my approval before making paid API calls or creating AWS resources.**
+
+---
+
+## 9. Documentation
+
+Keep documentation concise and useful for future reference.
+
+Prioritize:
+- README with setup and execution instructions.
+- Simple architecture overview.
+- Explanation of the agent workflow.
 - RAG ingestion and retrieval flow.
-- MCP communication.
-- LLM routing decisions.
-- Testing strategy and results.
-- Significant bugs and fixes.
-- Deployment steps.
-- Trade-offs and limitations.
+- MCP integration.
+- AWS architecture as features are introduced.
+- Important design decisions and trade-offs.
 
-Keep documentation concise, organized, and accurate.
+Avoid excessive documentation, duplicated explanations, and assignment-specific reporting.
 
-Avoid duplicating large code files unnecessarily.
-
-Do not claim functionality is implemented or verified when it is not.
+Documentation should support GitHub portfolio presentation and technical interview preparation.
 
 ---
 
-## 10. Recommendations and Improvements
-
-After reviewing or completing a component, suggest improvements when relevant.
-
-Categorize them as:
-
-- **P0 — Required:** Necessary for assignment or rubric compliance.
-- **P1 — Important:** Meaningful correctness, reliability, or maintainability improvements.
-- **P2 — Optional:** Enhancements that are not necessary for the assignment.
-
-For significant suggestions, explain:
-
-- The problem.
-- The proposed improvement.
-- Why it matters.
-- The implementation complexity.
-- Any trade-offs.
-
-Do not automatically implement unrelated suggestions.
-
-Wait for my approval.
-
----
-
-## 11. Scope Control
+## 10. Scope Control
 
 When I request a specific task:
 
-1. Focus on that task.
-2. Do not rewrite unrelated components.
-3. Do not introduce unrelated features.
-4. Do not perform unnecessary refactoring.
-5. Do not install dependencies without a clear need.
-6. Do not make architectural changes without explaining them.
-7. Do not run paid tests without approval.
-8. Do not continue to another implementation step without approval.
+1. Focus only on the requested task.
+2. Do not make unrelated improvements.
+3. Do not modify files outside the approved scope.
+4. Do not add dependencies unnecessarily.
+5. Do not introduce advanced architectural patterns without a clear need.
+6. Do not remove functionality without approval.
+7. Do not make paid API calls without approval.
+8. Do not implement multiple planned changes together.
+9. Always explain proposed changes before implementation.
+10. Always stop after completing one approved change.
 
-If an existing component already satisfies the requirements and is sufficiently simple, leave it unchanged.
+If additional problems are discovered during implementation, report them separately instead of fixing them automatically.
 
 ---
 
-## 12. Final Guiding Principles
+## 11. Final Guiding Principles
 
-1. **Rubric compliance is mandatory.**
-2. **Simplicity and readability are top priorities.**
-3. **Correctness and reliability must be preserved.**
-4. **Implement incrementally, one file at a time.**
-5. **Explain the code so I can learn it.**
-6. **Use mocked tests by default.**
-7. **Never make paid API calls without approval.**
-8. **Document important decisions for interview preparation.**
-9. **Avoid unnecessary abstractions and overengineering.**
-10. **Wait for approval before proceeding to the next step.**
+1. **Simplicity over unnecessary complexity.**
+2. **Understanding over clever implementations.**
+3. **Working functionality over aggressive code reduction.**
+4. **One approved change at a time.**
+5. **Minimal but meaningful testing.**
+6. **AWS integration should be gradual and purposeful.**
+7. **Never incur API or cloud costs without approval.**
+8. **Keep the project resume-worthy and interview-friendly.**
+9. **Explain important architectural decisions clearly.**
+10. **Always wait for approval before proceeding.**
 
-**The goal is not simply to finish the assignment. The goal is to build a complete, understandable, technically sound project that I can confidently explain in an interview.**
+**Final goal:** Build a clean, technically meaningful multi-agent RAG application with practical AWS integration that I can confidently demonstrate, explain, and discuss during software engineering interviews.

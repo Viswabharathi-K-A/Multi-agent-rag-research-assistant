@@ -1,15 +1,13 @@
-"""Keep application startup independent of local model assets in offline tests."""
-
-from unittest.mock import Mock
+"""Shared client that skips embedding downloads during application startup."""
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app import main
 
 
-@pytest.fixture(autouse=True)
-def startup_embeddings(monkeypatch):
-    """Mock only FastAPI's loader; retrieval tests retain their own boundaries."""
-    loader = Mock()
-    monkeypatch.setattr(main, "get_embeddings", loader)
-    return loader
+@pytest.fixture
+def client(monkeypatch):
+    monkeypatch.setattr(main, "get_embeddings", lambda model_name: None)
+    with TestClient(main.app) as client:
+        yield client

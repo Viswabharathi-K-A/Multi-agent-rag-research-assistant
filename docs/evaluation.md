@@ -1,10 +1,16 @@
 # RAG evaluation
 
-## Decision and scope
+## Scope
 
-Retain top-10 similarity retrieval with one continuation per original match. These results are sufficient to move development forward; further retrieval tuning is deferred while the remaining assignment requirements are completed. This is a practical project decision, not a claim that retrieval is optimal or that every answer is correct.
+Two historical 12-question runs compare top-10 document retrieval with top-10 plus
+continuation expansion. Both generated and scored all 12 answers. The measured
+path is the document-only Research worker, not the complete supervisor graph,
+web search, React UI, or container deployment. These are recorded results; no paid
+evaluation was rerun during portfolio cleanup.
 
-Two complete, live 12-question evaluations are preserved below. Both generated 12 answers successfully and scored all 48 question/metric combinations without execution failures. The measured path is the Research worker's document-only LCEL pipeline, not the full supervisor graph, web retrieval, frontend streaming, or deployed application.
+The continuation strategy remains implemented. Its observed relevance/recall gains
+came with more context and lower precision; the experiment does not establish an
+optimal configuration or end-to-end application accuracy.
 
 ## Dataset and method
 
@@ -79,7 +85,7 @@ The raw local artifacts are:
 | Baseline | `data/evaluation/full12_flash_lite_k10_answers.jsonl` | `data/evaluation/full12_flash_lite_k10_scores.json` |
 | Continuation | `data/evaluation/full12_continuation_answers.jsonl` | `data/evaluation/full12_continuation_scores.json` |
 
-Collector rows preserve generated responses, retrieved text, source metadata, references, provider/model, status, duration, and trace. Scorer files preserve full-precision per-question scores, averages, evaluator settings, timestamps, and scoring duration. The `data/` directory is ignored by Git: this report preserves both numeric evaluations, but the raw artifacts and corpus must be supplied separately for submission/reproduction. They are not bundled by these links or by a Git checkout.
+Collector rows preserve generated responses, retrieved text, source metadata, references, provider/model, status, duration, and trace. Scorer files preserve full-precision per-question scores, averages, evaluator settings, timestamps, and scoring duration. The `data/` directory is ignored by Git: this report preserves both numeric evaluations, but the raw artifacts and corpus must be supplied separately for reproduction. They are not bundled with a Git checkout.
 
 After preparing the corpus/index, installing the shared environment's pinned dependencies, and configuring credentials, collection and scoring use this shape:
 
@@ -91,21 +97,26 @@ After preparing the corpus/index, installing the shared environment's pinned dep
 
 Apply the pacing/warm-up described above when reproducing these runs. Current code reproduces the continuation strategy; the baseline was measured before continuation was added. Existing output files are never overwritten. No live evaluation runs as part of normal pytest.
 
-## Dependency consolidation
+## Interpretation and limitations
 
-The recorded runs originally used separate application and scoring environments to avoid dependency conflicts. On 2026-10-27 the project consolidated into one `requirements.txt` and the main `.venv`, after a clean temporary environment passed all 96 offline tests, RAGAS metric imports, graph compilation, provider construction, and tool binding. The shared set uses OpenAI SDK 2.54.0, jiter 0.14.0, pydantic-settings 2.16.1, and python-dotenv 1.2.4. Configured generation/judge model IDs did not change. The historical scores above were not regenerated during consolidation. The former separate scoring environment used different transitive pins; these results are preserved as measured, not claimed as new measurements under the consolidated environment. Linux/Cloud Run compatibility and live SDK calls still need validation.
+- This is a small development set used for retrieval tuning, not a held-out
+  benchmark. It covers seven papers, with one cross-paper question. There were
+  no repeated-run confidence intervals.
+- RAGAS judges can vary, and model aliases may change. Citation identity checks
+  do not establish claim-level correctness. The PBFT faithfulness discrepancy
+  described above remains unresolved; the measured score is retained.
+- Context grew by about 64.5%. Extra context can increase input tokens, cost, and
+  irrelevant evidence; context recall of 1.0000 is not proof of perfect retrieval.
+- Collector timings include run-wrapper pacing and are not clean response-latency
+  measurements. Scoring time is evaluator runtime, not application latency.
+- Request/token counts and billed cost were not captured. Do not describe these
+  results as a measured cost reduction or latency improvement.
+- These runs predate dependency consolidation. They originally used separate
+  application/scoring environments, with different transitive pins. They were not
+  rerun under the shared environment, React frontend, or Docker image.
+- RAGAS 0.4.3 uses legacy interfaces that emit deprecation warnings. Future-version
+  compatibility is unverified.
 
-## Limitations and remaining required measurements
-
-- These are single runs on a small development set used to guide retrieval changes, not a held-out benchmark. There are no repeated-run confidence intervals; generation and LLM judge variability can influence differences. Model aliases may also change behavior over time.
-- The test set covers seven papers and only one cross-paper comparison. It does not test web/current-events grounding or full multi-agent output. More questions are optional for now; completing the remaining architecture takes priority.
-- RAGAS estimates grounding/relevance rather than proving factual correctness. The baseline cross-paper context recall was 1.000 despite missing explicit passages. The PBFT faithfulness discrepancy further motivates honest reporting and manual review rather than treating scores as ground truth.
-- Citation IDs/pages are preserved and tested offline, but generated claim-level citation correctness is not comprehensively validated. PDFs can contain extraction errors, broken words, or imperfect table/column order.
-- Per-question collector durations include any pacing wait introduced by the wrapper, so they are not clean retrieval/LLM latency measurements. Separate retrieval, generation, total response latency, TTFT, and Cloud Run cold/warm measurements remain required.
-- Actual token usage, request counts, and billed/estimated cost per question were not captured. Those measurements remain required; the context character counts are not token counts or billing estimates.
-- The generator was Gemini only. OpenAI was the evaluator, which does not count as demonstrating application routing across two generation providers. Provider quality/latency/cost comparison and exercised, inspectable cost/capability routing remain required.
-- RAGAS emits deprecation warnings for the legacy metric/evaluation interface used with pinned version 0.4.3. Both runs completed; compatibility with a future version is not claimed.
-
-## Development priorities
-
-Retain the current retrieval strategy and these results. Do not spend on repeated retrieval tuning unless a concrete blocking defect appears. Prioritize the missing Code and Summary specialists, complete LangGraph execution and failure handling, inspectable two-provider routing, actual MCP sharing between agents, FastAPI/SSE and citation/trace UI, Cloud Run deployment, and the remaining evaluation/README/process-log evidence. The measurements above satisfy the recorded RAGAS experiment, not completion of the whole assignment.
+For a resume, describe this as a **12-question Research-pipeline RAGAS experiment**,
+not a full-system accuracy benchmark. The current architecture and verification
+scope are documented in [architecture.md](architecture.md).

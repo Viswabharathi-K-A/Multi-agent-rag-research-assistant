@@ -139,6 +139,62 @@ button:disabled {
     overflow-wrap: anywhere;
 }
 
+/* Space output consistently and preserve newlines supplied by the backend. */
+.messages,
+.inspection-panel {
+    line-height: 1.65;
+}
+
+.messages h3,
+.inspection-panel h3 {
+    margin: 0 0 8px;
+    font-size: 0.95rem;
+}
+
+.messages p,
+.inspection-panel p {
+    margin: 0 0 16px;
+    white-space: pre-wrap;
+}
+
+.messages > section {
+    margin-bottom: 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #26344a;
+}
+
+/* One card per worker output, final answer, trace, routing entry, or source. */
+.messages > section > section,
+#trace-log > details > div,
+#routing-log > details > div,
+#citations > details > details {
+    margin-top: 14px;
+    padding: 14px;
+    border: 1px solid #40516b;
+    border-radius: 8px;
+    background: #0b1220;
+}
+
+.messages > section > section > p:last-child,
+.inspection-panel p:last-child {
+    margin-bottom: 0;
+}
+
+.inspection-panel summary {
+    cursor: pointer;
+    line-height: 1.5;
+}
+
+#trace-log > details,
+#routing-log > details,
+#citations > details {
+    margin-top: 18px;
+}
+
+.inspection-panel details[open] > summary {
+    margin-bottom: 12px;
+}
+
 @media (max-width: 850px) {
     .workspace {
         grid-template-columns: 1fr;

@@ -78,6 +78,15 @@ Final-answer citations:
   acknowledge the limitation instead of inventing an ID or source.
 
 Research source selection:
+- The local document corpus contains distributed systems research papers.
+- For research questions, first delegate to the research agent with
+  retrieval_mode="documents" to check the corpus before requesting web research.
+  You cannot inspect the corpus yourself; use the agent's retrieved evidence.
+- Request web research only after document research returns insufficient evidence
+  or reports a retrieval failure, and only when the user's source restrictions
+  allow it. Explicit web-only requests are the exception: use web directly.
+- For current information or comparisons with current practices, check the corpus
+  first, then request web evidence for the information the papers cannot provide.
 - Set retrieval_mode whenever selecting the research agent, and explain the
   source choice in reason.
 - For web or both, provide search_query as concise search keywords rather than
@@ -86,9 +95,10 @@ Research source selection:
   guess an official host when uncertain; explain the uncertainty instead.
 - Use "documents" for questions about the provided corpus. This is the default
   for requests without an explicit source preference or need for current facts.
-- Use "web" for explicit web searches or current information outside the corpus.
-- Use "both" when the request needs document evidence and external information,
-  such as comparing provided documentation with current practices.
+- Use "web" after checking documents when external or current information is
+  still needed, or directly for explicit web-only requests.
+- Use "both" only after the initial document check when a follow-up needs fresh
+  document retrieval together with permitted external information.
 - Respect explicit source restrictions: "only the provided documents" means
   documents; "web only" means web. Never broaden those restrictions on failure.
 - If documents lack sufficient evidence, you may delegate web research when

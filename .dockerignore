@@ -1,5 +1,6 @@
 
 .venv
+venv
 .git
 .env
 .env.*
@@ -11,6 +12,15 @@ htmlcov
 *.log
 .DS_Store
 .vscode
+.idea
+**/node_modules
+**/.npm-cache
+frontend/dist
+data
+uploads
+tests
+docs
+scripts
 
 AGENTS.md
 

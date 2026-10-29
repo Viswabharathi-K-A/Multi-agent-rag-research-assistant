@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from time import perf_counter
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessageChunk
@@ -35,7 +35,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-STATIC_DIR = Path(__file__).parent / "static"
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -74,18 +74,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.mount(
-    "/static",
-    StaticFiles(directory=str(STATIC_DIR)),
-    name="static",
-)
+# Allow API-only development before the frontend has been built.
+if (FRONTEND_DIR / "assets").is_dir():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(FRONTEND_DIR / "assets")),
+        name="assets",
+    )
 
 
 @app.get("/", include_in_schema=False)
 async def homepage():
-    return FileResponse(
-        STATIC_DIR / "index.html"
-    )
+    index = FRONTEND_DIR / "index.html"
+    if not index.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail="Frontend not built. Run 'npm.cmd --prefix frontend run build' "
+                   "from the project root, then restart FastAPI.",
+        )
+    return FileResponse(index)
 
 
 @app.get(
