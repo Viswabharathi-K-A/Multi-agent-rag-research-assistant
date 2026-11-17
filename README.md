@@ -7,6 +7,31 @@ execution traces, source excerpts, and the final answer.
 
 Built as a graduate course project and developed into a local portfolio application.
 
+## Architecture
+
+[![Multi-agent RAG architecture showing Docker hosting, dynamic agent routing, document retrieval, and external APIs](docs/architecture/system.png)](docs/architecture/system.png)
+
+The supervisor dynamically delegates to specialized agents and reviews their
+findings. FastAPI streams output and source citations to the React interface.
+
+[Execution flow and design decisions](docs/architecture.md)
+
+## App screenshots
+
+**Homepage** — question input and execution inspection panels.
+
+![Research assistant homepage](docs/MultiAgent_Home.png)
+
+**Query execution** — a completed Raft leader-election query, with intermediate
+Research output and the supervisor's delegation trace.
+
+![Raft query with Research output and agent execution trace](docs/MultiAgent_Query.png)
+
+**Final answer and sources** — document citations link to retrieved PDF chunks,
+with filenames and page numbers listed in the Sources panel.
+
+![Final answer with document citations and retrieved PDF sources](docs/MultiAgent_Sources.png)
+
 ## What it does
 
 - Retrieves PDF evidence from Chroma using local CPU embeddings.
